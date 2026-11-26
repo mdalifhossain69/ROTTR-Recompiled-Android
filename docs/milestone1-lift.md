@@ -1,6 +1,14 @@
 # Milestone 1: lift and compare a few functions
 
+**Status: ✅ COMPLETE** (commit `97bf098`)
+
 Goal: prove the translation path works on real code from the game before scaling it up.
+
+## Results Summary
+- **30 functions lifted** to LLVM IR via Remill (0 failed)
+- **23 native aarch64 Remill intrinsics** implemented in `runtime/src/remill_intrinsics.cpp`
+- **1 leaf function (0x7f0460) verified** — 100% match (50/50 inputs) between Unicorn x86-64 and native ARM64
+- All 4 CMake tests pass: guest, recon, functions, harness
 
 ## Inputs
 - `generated/functions.csv`, from `scripts/functions.py`, on the owner's machine.

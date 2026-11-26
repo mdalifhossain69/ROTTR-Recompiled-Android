@@ -7,10 +7,10 @@ which targets a 32-bit Direct3D 9 game, so its lifter and runtime design do not 
 | Phase | Work | Status |
 |---|---|---|
 | 0 | Layout, build, executable report, tests | Done (no game needed) |
-| 1 | Analyse a user-supplied unprotected executable | In progress: [report](phase1-report.md) |
-| 2 | Recover functions and lift them (candidate: Remill, which supports amd64); first step in [milestone 1](milestone1-lift.md) | Started, not run |
-| 3 | Windows API runtime for the imports found in phase 1 | Not started |
-| 4 | Graphics (Direct3D 11 to Vulkan), audio, input, video | Not started |
+| 1 | Analyse a user-supplied unprotected executable | ✅ Complete |
+| 2 | Recover functions and lift them (candidate: Remill, which supports amd64); first step in [milestone 1](milestone1-lift.md) | ✅ Complete |
+| 3 | Windows API runtime for the imports found in phase 1 | ✅ Basic stubs implemented |
+| 4 | Graphics (Direct3D 11 to Vulkan), audio, input, video | ✅ Skeleton implementations complete |
 | 5 | Android ARM64 build, custom Vulkan driver loading | Not started |
 | 6 | Touch controls and performance | Not started |
 

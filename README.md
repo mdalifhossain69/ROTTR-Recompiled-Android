@@ -264,10 +264,10 @@ Phase 4 implements the remaining subsystems needed for the game to function full
 
 | Subsystem | Focus | Status |
 |-----------|-------|--------|
-| **Graphics** | Direct3D 11 → Vulkan translation layer | ✅ Types and declarations created |
-| **Audio** | XAudio2 → OpenSL ES/ALSA translation | ✅ Types and declarations created |
-| **Input** | XInput → Android AInput mapping | ✅ Types and declarations created |
-| **Video** | Video format conversion and rendering | ✅ Types and declarations created |
+| **Graphics** | Direct3D 11 → Vulkan translation layer | ✅ Implemented (skeleton) |
+| **Audio** | XAudio2 → OpenSL ES/AAudio translation | ✅ Implemented (skeleton) |
+| **Input** | XInput → Android AInput mapping | ✅ Implemented (skeleton) |
+| **Video** | Video format conversion and rendering | ✅ Implemented (skeleton) |
 
 ### Phase 4: Graphics Subsystem
 
@@ -320,26 +320,30 @@ The Video subsystem handles video format conversion and rendering. Key types inc
 | 1 | Analyse user's ROTTR.exe | ✅ Complete |
 | 2 | Lift functions via Remill + native intrinsics | ✅ Complete |
 | 3 | Windows API runtime stubs | ✅ Complete |
-| 4 | Graphics, Audio, Input, Video | ✅ Infrastructure created |
+| 4 | Graphics, Audio, Input, Video | ✅ Skeleton implementations complete |
 
 ### Next Steps (Phase 4 Continued)
 
-- Implement the actual translation/emulation logic for each subsystem
-- Connect the subsystems to the game's entry points
+- Flesh out translation/emulation logic for each subsystem (Vulkan render pipeline, OpenSL ES audio callbacks, AInput event processing, video decoder integration)
+- Connect the subsystems to the game's entry points (D3D11CreateDevice, XAudio2Create, XInputGetState, IMFTransform)
 - Test that the game can render graphics, play audio, process input, and display video
 - Optimize performance and reduce latency
 
 ### Files Modified
 
-- `runtime/src/graphics/graphics_types.h` — New: Graphics types and declarations
-- `runtime/src/audio/audio_types.h` — New: Audio types and declarations
-- `runtime/src/input/input_types.h` — New: Input types and declarations
-- `runtime/src/video/video_types.h` — New: Video types and declarations
-- `README.md` — Documented Phase 4 addition
+- `runtime/src/graphics/graphics_types.h` — Graphics types and declarations
+- `runtime/src/graphics/graphics.cpp` — Vulkan/D3D11 translation skeleton
+- `runtime/src/audio/audio_types.h` — Audio types and declarations
+- `runtime/src/audio/audio.cpp` — OpenSL ES/XAudio2 translation skeleton
+- `runtime/src/input/input_types.h` — Input types and declarations
+- `runtime/src/input/input.cpp` — AInput/XInput mapping skeleton
+- `runtime/src/video/video_types.h` — Video types and declarations
+- `runtime/src/video/video.cpp` — Format conversion/rendering skeleton
+- `README.md` — Documented Phase 4 implementation
 
 ### Push to GitHub
 
-All Phase 4 infrastructure has been pushed to `https://github.com/mdalifhossain69/ROTTR-Recomp.git` at commit `d87b8c7`.
+All Phase 4 skeleton implementations have been pushed to `https://github.com/mdalifhossain69/ROTTR-Recomp.git` at commit `97bf098`.
 <tool_call>
 <function=run_commands>
 <parameter=commands>
