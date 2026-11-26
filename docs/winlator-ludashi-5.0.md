@@ -57,6 +57,17 @@ A second container (Proton 11.0-7 arm64ec) exists but was not the one selected.
 | Async Cache | On |
 | DDraw Wrapper | none |
 | 32-bit Emulator | FEXCore |
+| FEXCore Version | 2611 |
+
+## In-game
+| Setting | Value |
+|---|---|
+| Graphics | Medium |
+| DirectX 12 | Off |
+| Frame generation | Off |
+
+With DirectX 12 off, the game renders through DXVK; the VKD3D settings apply only
+to DirectX 12.
 
 ## Environment variables
 ```
@@ -84,8 +95,6 @@ TU_DEBUG=gmem
 | Sharpness Effect | None |
 
 ## Still to record
-- FEXCore version
-- In-game graphics preset, resolution and DirectX 11 or 12
-- Upscaling or frame generation
+- In-game resolution and upscaling
 - FPS in this app alone (the 60 frame rate setting needs checking against
   the 70-100 FPS reported across three apps)
