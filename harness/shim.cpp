@@ -2,9 +2,14 @@
 // Native shim that runs Remill-lifted functions and captures CPU/memory state.
 // Called from scripts/compare_lifted.py via ctypes.
 //
-// The Remill state layout must match your Remill build. Adjust the
-// RemillState struct below to match remill/Arch/X86/Runtime/State.h
-// from your Remill installation.
+// The lifted Remill function has signature:
+//   void sub_xxx(remill::State* state, uint64_t pc, void* memory)
+// This matches the Remill IR declarations in the lifted .ll files.
+//
+// The Remill state layout comes from remill/Arch/X86/Runtime/State.h
+// in your Remill installation. The shim maps the Python ctypes Snapshot
+// onto the GPR/FLAGS/XMM portions of that state.
+
 #include <cstdint>
 #include <cstring>
 #include <csignal>
@@ -21,15 +26,10 @@ struct Snapshot {
 };
 
 // ---------------------------------------------------------------------------
-// Remill CPU state.  Offsets must match your Remill version's State.h.
+// Remill CPU state.  Use the real Remill State.h so the struct layout matches
+// what the lifted IR expects.
 // ---------------------------------------------------------------------------
-struct RemillState {
-    uint64_t gpr[16];   // rax..r15
-    uint64_t rip;
-    uint64_t rflags;
-    uint64_t xmm[16][2]; // 128-bit XMM as two 64-bit lanes
-    void*    memory_state;
-};
+#include <remill/Arch/X86/Runtime/State.h>
 
 // ---------------------------------------------------------------------------
 // Memory region tracking (for harness_add_region / harness_clear_regions)
@@ -89,12 +89,13 @@ extern "C" int harness_run(void* func_addr, uint64_t rva,
     sigaction(SIGSEGV, &sa, &old_sa);
 
     int rc = 0;
-    RemillState state;
+    remill::State state;
     std::memset(&state, 0, sizeof(state));
     uint64_t eflags = 0x2;  // reserved bit always set
-    uint64_t final_eflags = 0;
     static const int flag_bits[] = {0, 2, 4, 6, 7, 10, 11};
-    typedef void (*lifted_fn)(void*);
+
+    // Lifted function signature: void sub_xxx(remill::State*, uint64_t pc, void* memory)
+    typedef void (*lifted_fn)(remill::State*, uint64_t, void*);
     lifted_fn fn = nullptr;
 
     if (sigsetjmp(fault_jmp, 1) != 0) {
@@ -102,7 +103,7 @@ extern "C" int harness_run(void* func_addr, uint64_t rva,
         goto done;
     }
 
-    // Build Remill state from input snapshot
+    // Build Remill state from input snapshot (GPRs rax..r15)
     std::memcpy(state.gpr, snap_in->gpr, sizeof(state.gpr));
     state.rip = rva;
 
@@ -114,18 +115,22 @@ extern "C" int harness_run(void* func_addr, uint64_t rva,
     }
     state.rflags = eflags;
 
+    // Copy XMM registers
     for (int i = 0; i < 16; i++) {
         std::memcpy(state.xmm[i], snap_in->xmm[i], 16);
     }
 
-    // Call the lifted Remill function: void sub_xxx(void* state)
+    // Guest memory: flat 1 MB buffer managed by remill_intrinsics.cpp
+    static uint8_t guest_memory[0x100000];
+
+    // Call the lifted Remill function: void sub_xxx(state, pc, memory)
     fn = reinterpret_cast<lifted_fn>(func_addr);
-    fn(&state);
+    fn(&state, rva, guest_memory);
 
     // Read state back into output snapshot
     std::memcpy(snap_out->gpr, state.gpr, sizeof(snap_out->gpr));
 
-    final_eflags = state.rflags;
+    uint64_t final_eflags = state.rflags;
     for (int i = 0; i < 7; i++) {
         snap_out->flags[i] = (final_eflags >> flag_bits[i]) & 1;
     }
