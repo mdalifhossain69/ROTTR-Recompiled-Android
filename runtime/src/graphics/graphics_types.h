@@ -1,6 +1,38 @@
 // graphics_types.h
 // Type definitions for the Graphics Subsystem (Direct3D 11 → Vulkan translation layer)
 
+#pragma once
+
+#include <cstdint>
+#include "video/video_types.h"
+
+// --- Windows basic types ---
+typedef int32_t BOOL;
+typedef uint32_t UINT;
+typedef uint8_t UINT8;
+typedef uint16_t UINT16;
+typedef uint32_t UINT32;
+typedef uint64_t UINT64;
+typedef int32_t INT;
+typedef int8_t INT8;
+typedef int16_t INT16;
+typedef int32_t INT32;
+typedef int64_t INT64;
+typedef void* HANDLE;
+typedef HANDLE HWND;
+
+// --- Video Types (must be before swap chain) ---
+enum class DXGI_FORMAT {
+    UNKNOWN = 0,
+    R32G32B32A32_TYPELESS = 1,
+    R32G32B32A32_FLOAT = 2,
+    R24G8_TYPELESS = 26,
+    D24_UNORM_S8_UINT = 27,
+    B8G8R8A8_TYPELESS = 28,
+    B8G8R8A8_UNORM = 29,
+    // ... more formats
+};
+
 // --- Core Types ---
 enum class D3D11_FILTER {
     MIN_MAG_MIP_POINT = 0x1,
@@ -31,6 +63,22 @@ enum class D3D11_TEXTURE_ADDRESS_MODE {
 };
 
 // --- Depth Stencil Description ---
+enum class D3D11_DEPTH_WRITE_MASK {
+    ZERO = 0,
+    ALL = 1,
+};
+
+enum class D3D11_STENCIL_OP {
+    KEEP = 1,
+    ZERO = 2,
+    REPLACE = 3,
+    INCR_SAT = 4,
+    DECR_SAT = 5,
+    INVERT = 6,
+    INCR = 7,
+    DECR = 8,
+};
+
 struct D3D11_DEPTH_STENCIL_DESC {
     BOOL DepthEnable;
     D3D11_DEPTH_WRITE_MASK DepthWriteMask;
@@ -41,10 +89,32 @@ struct D3D11_DEPTH_STENCIL_DESC {
     D3D11_STENCIL_OP StencilFailOp;
     D3D11_STENCIL_OP StencilDepthFailOp;
     D3D11_STENCIL_OP StencilPassOp;
-    UINT8 StencilReadMask;  // (duplicate for clarity)
 };
 
 // --- Swap Chain Description ---
+enum class DXGI_USAGE {
+    RENDER_TARGET_OUTPUT = 0x1,
+    SHADER_INPUT = 0x10,
+    BACK_BUFFER = 0x20,
+    SHARED = 0x40,
+    READ_ONLY = 0x80,
+    DISCARD_ON_PRESENT = 0x100,
+    UNORDERED_ACCESS = 0x200,
+};
+
+enum class DXGI_SCALING {
+    STRETCH = 0,
+    NONE = 1,
+    ASPECT_RATIO_STRETCH = 2,
+};
+
+enum class DXGI_SWAP_EFFECT {
+    DISCARD = 0,
+    SEQUENTIAL = 1,
+    FLIP_SEQUENTIAL = 2,
+    FLIP_DISCARD = 3,
+};
+
 struct DXGI_SWAP_CHAIN_DESC1 {
     UINT Width;
     UINT Height;
@@ -60,6 +130,13 @@ struct DXGI_SWAP_CHAIN_DESC1 {
 };
 
 // --- Buffer Description ---
+enum class D3D11_USAGE {
+    DEFAULT = 0,
+    IMMUTABLE = 1,
+    DYNAMIC = 2,
+    STAGING = 3,
+};
+
 struct D3D11_BUFFER_DESC {
     UINT ByteWidth;
     D3D11_USAGE Usage;
@@ -69,35 +146,18 @@ struct D3D11_BUFFER_DESC {
 };
 
 // --- Resource Description ---
-struct D3D11_RESOURCE_DIMENSION {
-    D3D11_RESOURCE_DIMENSION Dimension;
-    D3D11_RESOURCE_DIMENSION_FLAG MiscFlags;
-    union {
-        D3D11_TEX1D_DESC Tex1D;
-        D3D11_TEX2D_DESC Tex2D;
-        D3D11_TEX3D_DESC Tex3D;
-    };
-};
-
-// --- Video Types ---
-enum class DXGI_FORMAT {
+enum class D3D11_RESOURCE_DIMENSION_TYPE {
     UNKNOWN = 0,
-    R32G32B32A32_TYPELESS = 1,
-    R32G32B32A32_FLOAT = 2,
-    R24G8_TYPELESS = 26,
-    D24_UNORM_S8_UINT = 27,
-    B8G8R8A8_TYPELESS = 28,
-    B8G8R8A8_UNORM = 29,
-    // ... more formats
+    BUFFER = 1,
+    TEXTURE1D = 2,
+    TEXTURE2D = 3,
+    TEXTURE3D = 4,
 };
 
-// --- Video Sample Structure ---
-struct VideoSample {
-    uint64_t timestamp;
-    uint8_t* data;
-    uint32_t width;
-    uint32_t height;
-    DXGI_FORMAT format;
+struct D3D11_RESOURCE_DIMENSION {
+    D3D11_RESOURCE_DIMENSION_TYPE Dimension;
+    UINT MiscFlags;
+    // Union removed for simplicity - would need forward declarations
 };
 
 // --- Function Declarations ---

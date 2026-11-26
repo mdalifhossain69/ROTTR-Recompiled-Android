@@ -1,8 +1,21 @@
 // input_types.h
 // Type definitions for the Input Subsystem (XInput → Android AInput mapping)
 
+#pragma once
+
+#include <cstdint>
+
+// --- Windows basic types ---
+typedef uint16_t UINT16;
+typedef uint32_t UINT32;
+typedef uint64_t UINT64;
+
+// Forward declarations for Android types
+struct AInputQueue;
+struct AInputEvent;
+
 // --- XInput Button Enums ---
-enum class XInputButton {
+enum class XInputButton : UINT16 {
     UP = 0x0001,
     DOWN = 0x0002,
     LEFT = 0x0004,
@@ -17,14 +30,13 @@ enum class XInputButton {
     A = 0x2000,
     B = 0x4000,
     X = 0x8000,
-    Y = 0x0000,  // Actually 0x0000 is wrong, should be different
-    // ... more buttons
+    Y = 0x0001,  // Fixed: was 0x0000
 };
 
 // --- XInput State ---
 struct XInputState {
-    uint16_t dwPacketNumber;
-    uint16_t buttons;
+    UINT16 dwPacketNumber;
+    UINT16 buttons;
     float fLeftTrigger;
     float fRightTrigger;
     float sThumbLY;  // Left thumbstick Y
@@ -34,13 +46,30 @@ struct XInputState {
 };
 
 // --- Android Key Codes ---
-enum class AndroidKey {
+enum class AndroidKey : UINT32 {
     UNKNOWN = 0,
-    BACK = 25,
+    BACK = 4,
     MENU = 82,
     SEARCH = 84,
     CALL = 5,
     ENDCALL = 6,
+    DPAD_UP = 19,
+    DPAD_DOWN = 20,
+    DPAD_LEFT = 21,
+    DPAD_RIGHT = 22,
+    BUTTON_A = 96,
+    BUTTON_B = 97,
+    BUTTON_X = 99,
+    BUTTON_Y = 100,
+    BUTTON_L1 = 102,
+    BUTTON_R1 = 103,
+    BUTTON_L2 = 104,
+    BUTTON_R2 = 105,
+    BUTTON_THUMBL = 106,
+    BUTTON_THUMBR = 107,
+    BUTTON_START = 108,
+    BUTTON_SELECT = 109,
+    BUTTON_MODE = 110,
     // ... more keys
 };
 
@@ -48,7 +77,7 @@ enum class AndroidKey {
 struct KeyEvent {
     AndroidKey key;
     bool pressed;
-    uint64_t timestamp;
+    UINT64 timestamp;
 };
 
 // --- Touch Event Structure ---
@@ -56,19 +85,20 @@ struct TouchEvent {
     int x;
     int y;
     int action;  // 0 = up, 1 = down, 2 = move
-    uint64_t timestamp;
+    UINT64 timestamp;
 };
 
 // --- Gamepad State ---
 struct GamepadState {
+    UINT16 buttons;
     bool up;
     bool down;
     bool left;
     bool right;
     bool start;
     bool back;
-    bool left shoulder;
-    bool right shoulder;
+    bool left_shoulder;
+    bool right_shoulder;
     bool a;
     bool b;
     bool x;
@@ -102,3 +132,31 @@ extern "C" void input_touch_event(const TouchEvent& event);
 
 // Get current gamepad state
 extern "C" GamepadState input_get_gamepad_state(void);
+
+// Poll and process pending input events
+extern "C" void input_poll_events(void);
+
+// Set the Android input queue (called from native activity)
+extern "C" void input_set_input_queue(AInputQueue* queue);
+
+// Check if a key is currently pressed
+extern "C" bool input_is_key_pressed(AndroidKey key);
+
+// Get pending key events (for game to poll)
+extern "C" UINT32 input_get_key_events(KeyEvent* outEvents, UINT32 maxEvents);
+
+// Get pending touch events (for game to poll)
+extern "C" UINT32 input_get_touch_events(TouchEvent* outEvents, UINT32 maxEvents);
+
+// --- XInput Interface Stubs ---
+// XInputGetState
+extern "C" UINT32 xinput_get_state(UINT32 userIndex, XInputState* state);
+
+// XInputSetState (vibration)
+extern "C" UINT32 xinput_set_state(UINT32 userIndex, void* vibration);
+
+// XInputGetCapabilities
+extern "C" UINT32 xinput_get_capabilities(UINT32 userIndex, UINT32 flags, void* capabilities);
+
+// XInputEnable
+extern "C" void xinput_enable(UINT32 enable);

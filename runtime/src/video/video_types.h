@@ -1,6 +1,14 @@
 // video_types.h
 // Type definitions for the Video Subsystem (Video format conversion and rendering)
 
+#pragma once
+
+#include <cstdint>
+
+// --- Windows basic types ---
+typedef uint32_t UINT32;
+typedef uint64_t UINT64;
+
 // --- Video Format ---
 enum class VideoFormat {
     UNKNOWN = 0,
@@ -16,31 +24,31 @@ enum class VideoFormat {
 // --- Video Sample ---
 struct VideoSample {
     VideoFormat format;
-    uint32_t width;
-    uint32_t height;
-    uint64_t timestamp;
+    UINT32 width;
+    UINT32 height;
+    UINT64 timestamp;
     uint8_t* data;  // Pointer to pixel data
-    uint32_t dataSize;  // Size of pixel data in bytes
+    UINT32 dataSize;  // Size of pixel data in bytes
 };
 
 // --- Video Renderer ---
 struct VideoRenderer {
     bool initialized;
-    uint32_t screenWidth;
-    uint32_t screenHeight;
+    UINT32 screenWidth;
+    UINT32 screenHeight;
     VideoFormat currentFormat;
     void* nativeWindow;  // Native window handle
 };
 
 // --- Function Declarations ---
 // Initialize video subsystem
-extern "C" bool video_init(uint32_t width, uint32_t height);
+extern "C" bool video_init(UINT32 width, UINT32 height);
 
 // Shutdown video subsystem
 extern "C" void video_shutdown(void);
 
 // Convert video format (source to destination)
-extern "C" bool video_convert_format(const VideoSample& src, VideoFormat dstFormat, uint8_t* dstData, uint32_t dstSize);
+extern "C" bool video_convert_format(const VideoSample& src, VideoFormat dstFormat, uint8_t* dstData, UINT32 dstSize);
 
 // Render a video frame to the screen
 extern "C" bool video_render_frame(const VideoSample& sample);
@@ -49,4 +57,31 @@ extern "C" bool video_render_frame(const VideoSample& sample);
 extern "C" bool video_get_sample(VideoSample& sample);
 
 // Set the video window size
-extern "C" void video_set_size(uint32_t width, uint32_t height);
+extern "C" void video_set_size(UINT32 width, UINT32 height);
+
+// Set the native window for rendering
+extern "C" void video_set_native_window(void* window);
+
+// Get video statistics
+extern "C" void video_get_stats(UINT64* framesRendered, UINT64* bytesProcessed, UINT32* frameCount);
+
+// --- Media Foundation / IMFTransform Stubs ---
+// These would be called by lifted game code for video decoding
+
+struct IMFTransform {
+    virtual ~IMFTransform() = default;
+};
+
+struct IMFMediaType {
+    virtual ~IMFMediaType() = default;
+};
+
+struct IMFSample {
+    virtual ~IMFSample() = default;
+};
+
+extern "C" void* mf_create_transform(void* clsid, void** transform);
+extern "C" void* mf_transform_process_input(void* transform, UINT32 inputStreamId, void* sample, UINT32 flags);
+extern "C" void* mf_transform_process_output(void* transform, UINT32 flags, UINT32 outputBufferCount, void* outputBuffers, UINT32* status);
+extern "C" void* mf_transform_set_input_type(void* transform, UINT32 inputStreamId, void* type, UINT32 flags);
+extern "C" void* mf_transform_set_output_type(void* transform, UINT32 outputStreamId, void* type, UINT32 flags);

@@ -1,5 +1,17 @@
 // audio_types.h
-// Type definitions for the Audio Subsystem (XAudio2 → OpenSL ES/ALSA translation layer)
+// Type definitions for the Audio Subsystem (XAudio2 → OpenSL ES/AAudio translation layer)
+
+#pragma once
+
+#include <cstdint>
+
+// --- Windows basic types ---
+typedef int32_t BOOL;
+typedef uint32_t UINT;
+typedef uint8_t UINT8;
+typedef uint16_t UINT16;
+typedef uint32_t UINT32;
+typedef uint64_t UINT64;
 
 // --- Core Types ---
 enum class AudioFormat {
@@ -18,31 +30,31 @@ enum class AudioChannel {
     QUAD = 4,
     SURROUND = 5,
     QUINT = 6,
-    7POINT1 = 8,
+    CHANNELS_7POINT1 = 8,
 };
 
 // --- Wave Format Ex ---
 struct AudioFormatEx {
-    uint16_t wFormatTag;       // Format tag (AudioFormat)
-    uint16_t nChannels;        // Number of channels
-    uint32_t nSamplesPerSec;   // Sample rate
-    uint32_t nAvgBytesPerSec;  // Average bytes per second
-    uint16_t nBlockAlign;      // Block align
-    uint16_t wBitsPerSample;   // Bits per sample
-    uint16_t cbSize;           // Size of extra waveformatex data
+    UINT16 wFormatTag;       // Format tag (AudioFormat)
+    UINT16 nChannels;        // Number of channels
+    UINT32 nSamplesPerSec;   // Sample rate
+    UINT32 nAvgBytesPerSec;  // Average bytes per second
+    UINT16 nBlockAlign;      // Block align
+    UINT16 wBitsPerSample;   // Bits per sample
+    UINT16 cbSize;           // Size of extra waveformatex data
 };
 
 // --- Buffer Description ---
 struct AudioBufferDesc {
-    uint32_t byteWidth;         // Buffer size in bytes
-    uint32_t usageFlags;        // Usage flags
-    uint32_t cpuAccessFlags;    // CPU access flags
+    UINT32 byteWidth;         // Buffer size in bytes
+    UINT32 usageFlags;        // Usage flags
+    UINT32 cpuAccessFlags;    // CPU access flags
 };
 
 // --- Audio Engine ---
 struct AudioEngine {
     bool initialized;
-    uint32_t sampleRate;
+    UINT32 sampleRate;
     AudioChannel channels;
     AudioFormat format;
     void* nativeEngine;  // Native audio engine handle
@@ -50,26 +62,26 @@ struct AudioEngine {
 
 // --- Function Declarations ---
 // Initialize audio subsystem
-extern "C" bool audio_init(uint32_t sampleRate, AudioChannel channels, AudioFormat format);
+extern "C" bool audio_init(UINT32 sampleRate, AudioChannel channels, AudioFormat format);
 
 // Shutdown audio subsystem
 extern "C" void audio_shutdown(void);
 
 // Write audio data to the buffer
-extern "C" uint32_t audio_write(const int16_t* samples, uint32_t sampleCount);
+extern "C" UINT32 audio_write(const int16_t* samples, UINT32 sampleCount);
 
 // Read audio data from the buffer
-extern "C" uint32_t audio_read(int16_t* samples, uint32_t sampleCount);
+extern "C" UINT32 audio_read(int16_t* samples, UINT32 sampleCount);
 
 // Get current audio position (in milliseconds)
-extern "C" uint32_t audio_get_position(void);
+extern "C" UINT32 audio_get_position(void);
 
 // Set audio volume (0.0 to 1.0)
 extern "C" void audio_set_volume(float volume);
 
 // --- XAudio2 Emulation Stubs ---
 // Map XAudio2 flags to native audio flags
-extern "C" uint32_t audio_map_xaudio2_flags(uint32_t xaudio2Flags);
+extern "C" UINT32 audio_map_xaudio2_flags(UINT32 xaudio2Flags);
 
 // Convert AudioFormat to native format
-extern "C" AudioFormat audio_convert_format(uint32_t formatTag);
+extern "C" AudioFormat audio_convert_format(UINT32 formatTag);

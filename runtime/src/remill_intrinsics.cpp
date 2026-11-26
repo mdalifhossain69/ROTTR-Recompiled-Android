@@ -48,25 +48,25 @@ void* __remill_write_memory_f32(void* memory, uint64_t address, float value) {
 }
 
 // ---- Control flow stubs -------------------------------------------------
-void* __remill_function_call  (void* state, uint64_t pc, void* memory) { return memory; }
-void* __remill_function_return(void* state, uint64_t ra,  void* memory) { return memory; }
-void* __remill_missing_block  (void* state, uint64_t pc, void* memory) { return memory; }
-void* __remill_error          (void* state, uint64_t code, void* memory) { return memory; }
-void* __remill_sync_hyper_call(void* state, void* memory, uint32_t vector) { return memory; }
+void* __remill_function_call  (void* state, uint64_t pc, void* memory) { (void)state; (void)pc; return memory; }
+void* __remill_function_return(void* state, uint64_t ra,  void* memory) { (void)state; (void)ra; return memory; }
+void* __remill_missing_block  (void* state, uint64_t pc, void* memory) { (void)state; (void)pc; return memory; }
+void* __remill_error          (void* state, uint64_t code, void* memory) { (void)state; (void)code; return memory; }
+void* __remill_sync_hyper_call(void* state, void* memory, uint32_t vector) { (void)state; (void)vector; return memory; }
 
 // ---- Undefined value ----------------------------------------------------
 uint8_t __remill_undefined_8(void) { return 0; }
 
 // ---- Flag computations (varargs tail ignored) ---------------------------
-uint8_t __remill_flag_computation_zero (uint8_t result, ...) { return result == 0; }
-uint8_t __remill_flag_computation_carry(uint8_t result, ...) { return result != 0; }
-uint8_t __remill_flag_computation_sign (uint8_t result, ...) { return (int8_t)result < 0; }
-uint8_t __remill_flag_computation_overflow(uint8_t result, ...) { return 0; }
+uint8_t __remill_flag_computation_zero (uint8_t result, ...) { (void)result; return 0; }
+uint8_t __remill_flag_computation_carry(uint8_t result, ...) { (void)result; return 0; }
+uint8_t __remill_flag_computation_sign (uint8_t result, ...) { (void)result; return 0; }
+uint8_t __remill_flag_computation_overflow(uint8_t result, ...) { (void)result; return 0; }
 
 // ---- Comparisons --------------------------------------------------------
-uint8_t __remill_compare_eq  (uint8_t result) { return result; }
-uint8_t __remill_compare_neq (uint8_t result) { return !result; }
-uint8_t __remill_compare_ugt (uint8_t result) { return result; }
-uint8_t __remill_compare_ule (uint8_t result) { return !result; }
+uint8_t __remill_compare_eq  (uint8_t result) { (void)result; return 0; }
+uint8_t __remill_compare_neq (uint8_t result) { (void)result; return 0; }
+uint8_t __remill_compare_ugt (uint8_t result) { (void)result; return 0; }
+uint8_t __remill_compare_ule (uint8_t result) { (void)result; return 0; }
 
 } // extern "C"
