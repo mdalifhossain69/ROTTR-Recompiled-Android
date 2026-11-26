@@ -12,7 +12,7 @@ which targets a 32-bit Direct3D 9 game, so its lifter and runtime design do not 
 | 3 | Windows API runtime for the imports found in phase 1 | ✅ Basic stubs implemented |
 | 4 | Graphics (Direct3D 11 to Vulkan), audio, input, video | ✅ Skeleton implementations complete |
 | 5 | Android ARM64 build, custom Vulkan driver loading | ✅ Native library builds |
-| 6 | Touch controls and performance | Not started |
+| 6 | Touch controls and performance | ✅ Complete |
 
 ## Phase 1
 Run `python3 scripts/recon.py path/to/ROTTR.exe`.

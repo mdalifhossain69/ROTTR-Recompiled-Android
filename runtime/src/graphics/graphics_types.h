@@ -178,3 +178,10 @@ extern "C" void* graphics_get_back_buffer(void);
 
 // Get graphics adapter info
 extern "C" void graphics_get_adapter_info(int& adapter_id, char* name, int max_name_len);
+
+// Phase 6: Performance monitoring
+extern "C" void graphics_get_perf_stats(double* out_fps, double* out_avg_frame_ms, double* out_min_frame_ms, double* out_max_frame_ms);
+
+// Phase 6: Frame pacing control
+extern "C" void graphics_set_target_fps(uint32_t fps);
+extern "C" void graphics_set_frame_pacing(bool enable);

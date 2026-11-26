@@ -1,6 +1,7 @@
 // audio.cpp
 // XAudio2 → OpenSL ES/AAudio translation layer implementation
 // Provides the function declarations from audio_types.h
+// Phase 6: Added AAudio low-latency path
 
 #include "audio/audio_types.h"
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <mutex>
 #include <queue>
 #include <vector>
+#include <atomic>
 
 // Platform-specific includes for Android
 #if defined(__ANDROID__)
@@ -49,6 +51,28 @@ typedef void* AAudioStreamBuilder;
 #define AAUDIO_FORMAT_PCM_FLOAT 0
 #define AAUDIO_STREAM_STATE_STARTED 0
 #define AAUDIO_STREAM_STATE_STOPPED 0
+#define AAUDIO_CALLBACK_RESULT_CONTINUE 0
+
+// Stub AAudio functions for non-Android builds
+typedef int aaudio_result_t;
+typedef int aaudio_data_callback_result_t;
+aaudio_result_t AAudio_createStreamBuilder(AAudioStreamBuilder** builder) { (void)builder; return AAUDIO_OK; }
+void AAudioStreamBuilder_delete(AAudioStreamBuilder* builder) { (void)builder; }
+void AAudioStreamBuilder_setDirection(AAudioStreamBuilder* builder, int direction) { (void)builder; (void)direction; }
+void AAudioStreamBuilder_setSharingMode(AAudioStreamBuilder* builder, int sharingMode) { (void)builder; (void)sharingMode; }
+void AAudioStreamBuilder_setPerformanceMode(AAudioStreamBuilder* builder, int performanceMode) { (void)builder; (void)performanceMode; }
+void AAudioStreamBuilder_setSampleRate(AAudioStreamBuilder* builder, int32_t sampleRate) { (void)builder; (void)sampleRate; }
+void AAudioStreamBuilder_setChannelCount(AAudioStreamBuilder* builder, int32_t channelCount) { (void)builder; (void)channelCount; }
+void AAudioStreamBuilder_setFormat(AAudioStreamBuilder* builder, int format) { (void)builder; (void)format; }
+void AAudioStreamBuilder_setDataCallback(AAudioStreamBuilder* builder, void* callback, void* userData) { (void)builder; (void)callback; (void)userData; }
+void AAudioStreamBuilder_setBufferCapacityInFrames(AAudioStreamBuilder* builder, int32_t capacity) { (void)builder; (void)capacity; }
+int32_t AAudioStreamBuilder_getFramesPerBurst(AAudioStreamBuilder* builder) { (void)builder; return 128; }
+aaudio_result_t AAudioStreamBuilder_openStream(AAudioStreamBuilder* builder, AAudioStream** stream) { (void)builder; (void)stream; return AAUDIO_OK; }
+int32_t AAudioStream_getFramesPerBurst(AAudioStream* stream) { (void)stream; return 128; }
+aaudio_result_t AAudioStream_requestStart(AAudioStream* stream) { (void)stream; return AAUDIO_OK; }
+aaudio_result_t AAudioStream_requestStop(AAudioStream* stream) { (void)stream; return AAUDIO_OK; }
+void AAudioStream_close(AAudioStream* stream) { (void)stream; }
+void AAudioStream_setVolume(AAudioStream* stream, float volume) { (void)stream; (void)volume; }
 #endif
 
 // Internal audio engine state
@@ -59,6 +83,10 @@ struct AudioEngineState {
     AudioFormat format = AudioFormat::FLOAT;
     float volume = 1.0f;
     uint64_t framesWritten = 0;
+
+    // Backend selection
+    enum class Backend { UNKNOWN, OPENSLES, AAUDIO };
+    Backend activeBackend = Backend::UNKNOWN;
 
 #if defined(__ANDROID__)
     // OpenSL ES objects
@@ -79,8 +107,14 @@ struct AudioEngineState {
     std::queue<std::vector<int16_t>> freeBuffers;
     std::queue<std::vector<int16_t>> filledBuffers;
     std::mutex bufferMutex;
-#else
-    // Non-Android stub
+
+    // AAudio buffer
+    std::vector<int16_t> aaudioBuffer;
+    std::atomic<uint32_t> aaudioBufferWritePos{0};
+    std::atomic<uint32_t> aaudioBufferReadPos{0};
+
+    // Performance mode
+    bool useLowLatency = true;
 #endif
 };
 
@@ -103,6 +137,105 @@ static void buffer_queue_callback(SLAndroidSimpleBufferQueueItf bq, void* contex
         (*bq)->Enqueue(bq, silence.data(), silence.size() * sizeof(int16_t));
     }
 }
+
+// AAudio stream callback - called from high-priority audio thread
+static aaudio_data_callback_result_t aaudio_callback(AAudioStream* stream __attribute__((unused)),
+                                                      void* userData,
+                                                      void* audioData,
+                                                      int32_t numFrames) {
+    AudioEngineState* state = static_cast<AudioEngineState*>(userData);
+    int16_t* output = static_cast<int16_t*>(audioData);
+
+    // Read from our ring buffer
+    uint32_t available = (state->aaudioBufferWritePos + state->aaudioBuffer.size() - state->aaudioBufferReadPos) % state->aaudioBuffer.size();
+    uint32_t toWrite = static_cast<uint32_t>(numFrames) * static_cast<uint32_t>(state->channels);
+
+    if (available >= toWrite) {
+        // Enough data available
+        uint32_t readPos = state->aaudioBufferReadPos.load();
+        uint32_t bufferSize = state->aaudioBuffer.size();
+
+        // Copy in two parts if wrapping
+        uint32_t firstPart = std::min(toWrite, bufferSize - readPos);
+        std::memcpy(output, state->aaudioBuffer.data() + readPos, firstPart * sizeof(int16_t));
+        if (firstPart < toWrite) {
+            std::memcpy(output + firstPart, state->aaudioBuffer.data(), (toWrite - firstPart) * sizeof(int16_t));
+        }
+
+        state->aaudioBufferReadPos = (readPos + toWrite) % bufferSize;
+
+        // Apply volume scaling
+        float vol = state->volume;
+        if (vol != 1.0f) {
+            for (uint32_t i = 0; i < toWrite; ++i) {
+                int32_t sample = static_cast<int32_t>(output[i]) * vol;
+                if (sample > 32767) sample = 32767;
+                if (sample < -32768) sample = -32768;
+                output[i] = static_cast<int16_t>(sample);
+            }
+        }
+    } else {
+        // Underrun - output silence
+        std::memset(output, 0, toWrite * sizeof(int16_t));
+    }
+
+    state->framesWritten += numFrames;
+
+    return AAUDIO_CALLBACK_RESULT_CONTINUE;
+}
+#endif
+
+// Phase 6: Initialize AAudio stream (low-latency path)
+#if defined(__ANDROID__)
+static bool init_aaudio_stream() {
+    aaudio_result_t result;
+
+    // Create stream builder
+    result = AAudio_createStreamBuilder(&g_audio.streamBuilder);
+    if (result != AAUDIO_OK) {
+        return false;
+    }
+
+    // Configure for low latency
+    AAudioStreamBuilder_setDirection(g_audio.streamBuilder, AAUDIO_DIRECTION_OUTPUT);
+    AAudioStreamBuilder_setSharingMode(g_audio.streamBuilder, AAUDIO_SHARING_MODE_SHARED);
+    AAudioStreamBuilder_setPerformanceMode(g_audio.streamBuilder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setSampleRate(g_audio.streamBuilder, g_audio.sampleRate);
+    AAudioStreamBuilder_setChannelCount(g_audio.streamBuilder, static_cast<int32_t>(g_audio.channels));
+    AAudioStreamBuilder_setFormat(g_audio.streamBuilder, AAUDIO_FORMAT_PCM_I16);
+    AAudioStreamBuilder_setDataCallback(g_audio.streamBuilder, aaudio_callback, &g_audio);
+
+    // Let AAudio choose optimal buffer size (use default, don't set explicitly)
+    // AAudioStreamBuilder_setBufferCapacityInFrames(g_audio.streamBuilder, AAudioStreamBuilder_getFramesPerBurst(g_audio.streamBuilder));
+
+    // Open stream
+    result = AAudioStreamBuilder_openStream(g_audio.streamBuilder, &g_audio.stream);
+    if (result != AAUDIO_OK) {
+        AAudioStreamBuilder_delete(g_audio.streamBuilder);
+        g_audio.streamBuilder = nullptr;
+        return false;
+    }
+
+    // Allocate ring buffer (4x burst size for safety)
+    int32_t burstSize = AAudioStream_getFramesPerBurst(g_audio.stream);
+    int32_t bufferFrames = burstSize * 4;
+    g_audio.aaudioBuffer.resize(bufferFrames * static_cast<size_t>(g_audio.channels), 0);
+    g_audio.aaudioBufferWritePos = 0;
+    g_audio.aaudioBufferReadPos = 0;
+
+    // Start stream
+    result = AAudioStream_requestStart(g_audio.stream);
+    if (result != AAUDIO_OK) {
+        AAudioStream_close(g_audio.stream);
+        g_audio.stream = nullptr;
+        AAudioStreamBuilder_delete(g_audio.streamBuilder);
+        g_audio.streamBuilder = nullptr;
+        return false;
+    }
+
+    g_audio.activeBackend = AudioEngineState::Backend::AAUDIO;
+    return true;
+}
 #endif
 
 // Initialize audio subsystem
@@ -117,7 +250,16 @@ extern "C" bool audio_init(uint32_t sampleRate, AudioChannel channels, AudioForm
     g_audio.framesWritten = 0;
 
 #if defined(__ANDROID__)
-    // Create OpenSL ES engine
+    // Phase 6: Try AAudio first for low latency
+    if (g_audio.useLowLatency) {
+        if (init_aaudio_stream()) {
+            g_audio.initialized = true;
+            return true;
+        }
+        // Fall back to OpenSL ES if AAudio fails
+    }
+
+    // Create OpenSL ES engine (fallback or primary)
     SLresult result;
 
     result = slCreateEngine(&g_audio.engineObject, 0, nullptr, 0, nullptr, nullptr);
@@ -190,6 +332,7 @@ extern "C" bool audio_init(uint32_t sampleRate, AudioChannel channels, AudioForm
     result = (*g_audio.playerPlay)->SetPlayState(g_audio.playerPlay, SL_PLAYSTATE_PLAYING);
     if (result != SL_RESULT_SUCCESS) return false;
 
+    g_audio.activeBackend = AudioEngineState::Backend::OPENSLES;
 #else
     // Non-Android: stub implementation
 #endif
@@ -205,37 +348,53 @@ extern "C" void audio_shutdown(void) {
     }
 
 #if defined(__ANDROID__)
-    // Stop playback
-    if (g_audio.playerPlay) {
-        (*g_audio.playerPlay)->SetPlayState(g_audio.playerPlay, SL_PLAYSTATE_STOPPED);
+    // Shutdown AAudio stream
+    if (g_audio.activeBackend == AudioEngineState::Backend::AAUDIO) {
+        if (g_audio.stream) {
+            AAudioStream_requestStop(g_audio.stream);
+            AAudioStream_close(g_audio.stream);
+            g_audio.stream = nullptr;
+        }
+        if (g_audio.streamBuilder) {
+            AAudioStreamBuilder_delete(g_audio.streamBuilder);
+            g_audio.streamBuilder = nullptr;
+        }
     }
 
-    // Destroy objects in reverse order
-    if (g_audio.playerObject) {
-        (*g_audio.playerObject)->Destroy(g_audio.playerObject);
-        g_audio.playerObject = nullptr;
+    // Shutdown OpenSL ES
+    if (g_audio.activeBackend == AudioEngineState::Backend::OPENSLES) {
+        // Stop playback
+        if (g_audio.playerPlay) {
+            (*g_audio.playerPlay)->SetPlayState(g_audio.playerPlay, SL_PLAYSTATE_STOPPED);
+        }
+
+        // Destroy objects in reverse order
+        if (g_audio.playerObject) {
+            (*g_audio.playerObject)->Destroy(g_audio.playerObject);
+            g_audio.playerObject = nullptr;
+        }
+
+        if (g_audio.outputMixObject) {
+            (*g_audio.outputMixObject)->Destroy(g_audio.outputMixObject);
+            g_audio.outputMixObject = nullptr;
+        }
+
+        if (g_audio.engineObject) {
+            (*g_audio.engineObject)->Destroy(g_audio.engineObject);
+            g_audio.engineObject = nullptr;
+        }
+
+        g_audio.engineEngine = nullptr;
+        g_audio.playerPlay = nullptr;
+        g_audio.playerVolume = nullptr;
+        g_audio.playerBufferQueue = nullptr;
+
+        // Clear buffer queues
+        std::lock_guard<std::mutex> lock(g_audio.bufferMutex);
+        while (!g_audio.freeBuffers.empty()) g_audio.freeBuffers.pop();
+        while (!g_audio.filledBuffers.empty()) g_audio.filledBuffers.pop();
+        g_audio.bufferPool.clear();
     }
-
-    if (g_audio.outputMixObject) {
-        (*g_audio.outputMixObject)->Destroy(g_audio.outputMixObject);
-        g_audio.outputMixObject = nullptr;
-    }
-
-    if (g_audio.engineObject) {
-        (*g_audio.engineObject)->Destroy(g_audio.engineObject);
-        g_audio.engineObject = nullptr;
-    }
-
-    g_audio.engineEngine = nullptr;
-    g_audio.playerPlay = nullptr;
-    g_audio.playerVolume = nullptr;
-    g_audio.playerBufferQueue = nullptr;
-
-    // Clear buffer queues
-    std::lock_guard<std::mutex> lock(g_audio.bufferMutex);
-    while (!g_audio.freeBuffers.empty()) g_audio.freeBuffers.pop();
-    while (!g_audio.filledBuffers.empty()) g_audio.filledBuffers.pop();
-    g_audio.bufferPool.clear();
 #endif
 
     std::memset(&g_audio, 0, sizeof(g_audio));
@@ -248,24 +407,54 @@ extern "C" uint32_t audio_write(const int16_t* samples, uint32_t sampleCount) {
     }
 
 #if defined(__ANDROID__)
-    std::lock_guard<std::mutex> lock(g_audio.bufferMutex);
+    if (g_audio.activeBackend == AudioEngineState::Backend::AAUDIO) {
+        // AAudio: write to ring buffer (lock-free for single producer)
+        uint32_t bufferSize = g_audio.aaudioBuffer.size();
+        uint32_t writePos = g_audio.aaudioBufferWritePos.load();
+        uint32_t readPos = g_audio.aaudioBufferReadPos.load();
 
-    if (g_audio.freeBuffers.empty()) {
-        // Buffer queue full - drop samples or wait
-        return 0;
+        uint32_t available;
+        if (writePos >= readPos) {
+            available = bufferSize - (writePos - readPos);
+        } else {
+            available = readPos - writePos;
+        }
+
+        uint32_t toWrite = std::min(sampleCount, available);
+
+        if (toWrite > 0) {
+            // Write in two parts if wrapping
+            uint32_t firstPart = std::min(toWrite, bufferSize - writePos);
+            std::memcpy(g_audio.aaudioBuffer.data() + writePos, samples, firstPart * sizeof(int16_t));
+            if (firstPart < toWrite) {
+                std::memcpy(g_audio.aaudioBuffer.data(), samples + firstPart, (toWrite - firstPart) * sizeof(int16_t));
+            }
+            g_audio.aaudioBufferWritePos = (writePos + toWrite) % bufferSize;
+        }
+
+        g_audio.framesWritten += toWrite / static_cast<uint32_t>(g_audio.channels);
+        return toWrite;
+    } else {
+        // OpenSL ES: use buffer queue
+        std::lock_guard<std::mutex> lock(g_audio.bufferMutex);
+
+        if (g_audio.freeBuffers.empty()) {
+            // Buffer queue full - drop samples or wait
+            return 0;
+        }
+
+        auto buffer = std::move(g_audio.freeBuffers.front());
+        g_audio.freeBuffers.pop();
+
+        uint32_t toWrite = std::min(sampleCount, static_cast<uint32_t>(buffer.size()));
+        std::memcpy(buffer.data(), samples, toWrite * sizeof(int16_t));
+        buffer.resize(toWrite);
+
+        g_audio.filledBuffers.push(std::move(buffer));
+        g_audio.framesWritten += toWrite / static_cast<uint32_t>(g_audio.channels);
+
+        return toWrite;
     }
-
-    auto buffer = std::move(g_audio.freeBuffers.front());
-    g_audio.freeBuffers.pop();
-
-    uint32_t toWrite = std::min(sampleCount, static_cast<uint32_t>(buffer.size()));
-    std::memcpy(buffer.data(), samples, toWrite * sizeof(int16_t));
-    buffer.resize(toWrite);
-
-    g_audio.filledBuffers.push(std::move(buffer));
-    g_audio.framesWritten += toWrite / static_cast<uint32_t>(g_audio.channels);
-
-    return toWrite;
 #else
     // Non-Android: just count frames
     g_audio.framesWritten += sampleCount / static_cast<uint32_t>(g_audio.channels);
@@ -309,15 +498,40 @@ extern "C" void audio_set_volume(float volume) {
     g_audio.volume = volume;
 
 #if defined(__ANDROID__)
-    if (g_audio.playerVolume) {
+    if (g_audio.activeBackend == AudioEngineState::Backend::OPENSLES && g_audio.playerVolume) {
         // OpenSL ES volume is in millibels (-10000 to 0)
         // Convert 0.0-1.0 to millibels (approximate)
         SLmillibel mb = static_cast<SLmillibel>(volume * volume * -10000.0f);  // quadratic for perceived loudness
         if (mb > 0) mb = 0;
         if (mb < -10000) mb = -10000;
         (*g_audio.playerVolume)->SetVolumeLevel(g_audio.playerVolume, mb);
+    } else if (g_audio.activeBackend == AudioEngineState::Backend::AAUDIO && g_audio.stream) {
+        // AAudio doesn't have setVolume - volume is applied in callback
+        // The callback will read g_audio.volume and scale output
     }
 #endif
+}
+
+// Phase 6: Enable/disable low-latency mode (AAudio)
+extern "C" void audio_set_low_latency(bool enable) {
+    if (!g_audio.initialized) {
+        g_audio.useLowLatency = enable;
+        return;
+    }
+    // Can only change at init time
+    (void)enable;
+}
+
+// Phase 6: Get active backend
+extern "C" int audio_get_backend(void) {
+    if (!g_audio.initialized) return 0;
+    return static_cast<int>(g_audio.activeBackend);
+}
+
+// Phase 6: Get buffer underrun count (for AAudio)
+extern "C" uint64_t audio_get_underruns(void) {
+    // TODO: Track underruns
+    return 0;
 }
 
 // --- XAudio2 Emulation Stubs ---

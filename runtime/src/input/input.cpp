@@ -64,7 +64,14 @@ float AMotionEvent_getY(const AInputEvent* event, size_t pointerIndex) { (void)e
 int32_t AMotionEvent_getActionButton(const AInputEvent* event) { (void)event; return 0; }
 int64_t AKeyEvent_getEventTime(const AInputEvent* event) { (void)event; return 0; }
 int64_t AMotionEvent_getEventTime(const AInputEvent* event) { (void)event; return 0; }
+int32_t AMotionEvent_getPointerId(const AInputEvent* event, size_t pointerIndex) { (void)event; (void)pointerIndex; return 0; }
+int32_t AMotionEvent_getPointerCount(const AInputEvent* event) { (void)event; return 0; }
 #endif
+
+// Touch controls forward declarations (Phase 6)
+extern "C" void touch_controls_on_touch_down_c(int pointer_id, int x, int y);
+extern "C" void touch_controls_on_touch_move_c(int pointer_id, int x, int y);
+extern "C" void touch_controls_on_touch_up_c(int pointer_id, int x, int y);
 
 // Internal input state
 struct InputState {
@@ -216,10 +223,32 @@ static void process_input_event(AInputEvent* event) {
             int32_t action = AMotionEvent_getAction(event);
             int32_t actionMasked = action & 0xFF;
             size_t pointerIndex = (action >> 8) & 0xFF;
+            int32_t pointerId = AMotionEvent_getPointerId(event, pointerIndex);
+
+            int x = static_cast<int>(AMotionEvent_getX(event, pointerIndex));
+            int y = static_cast<int>(AMotionEvent_getY(event, pointerIndex));
+
+            // Forward to touch controls (Phase 6)
+            if (actionMasked == AMOTION_EVENT_ACTION_DOWN ||
+                actionMasked == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+                touch_controls_on_touch_down_c(pointerId, x, y);
+            } else if (actionMasked == AMOTION_EVENT_ACTION_UP ||
+                       actionMasked == AMOTION_EVENT_ACTION_POINTER_UP) {
+                touch_controls_on_touch_up_c(pointerId, x, y);
+            } else if (actionMasked == AMOTION_EVENT_ACTION_MOVE) {
+                // Handle multi-touch move - iterate all pointers
+                size_t pointerCount = AMotionEvent_getPointerCount(event);
+                for (size_t i = 0; i < pointerCount; ++i) {
+                    int32_t pid = AMotionEvent_getPointerId(event, i);
+                    int px = static_cast<int>(AMotionEvent_getX(event, i));
+                    int py = static_cast<int>(AMotionEvent_getY(event, i));
+                    touch_controls_on_touch_move_c(pid, px, py);
+                }
+            }
 
             TouchEvent te;
-            te.x = static_cast<int>(AMotionEvent_getX(event, pointerIndex));
-            te.y = static_cast<int>(AMotionEvent_getY(event, pointerIndex));
+            te.x = x;
+            te.y = y;
             te.timestamp = AMotionEvent_getEventTime(event);
 
             if (actionMasked == AMOTION_EVENT_ACTION_DOWN ||

@@ -13,7 +13,9 @@ add_library(rottr_runtime STATIC
     runtime/src/graphics/graphics.cpp
     runtime/src/audio/audio.cpp
     runtime/src/input/input.cpp
+    runtime/src/input/touch_controls.cpp
     runtime/src/video/video.cpp
+    runtime/src/performance.cpp
 )
 target_include_directories(rottr_runtime PUBLIC runtime/include runtime/src)
 target_compile_options(rottr_runtime PRIVATE -Wall -Wextra -Werror)
@@ -23,7 +25,7 @@ if(ANDROID)
     add_library(rottr_android SHARED
         runtime/src/android_main.cpp
     )
-    target_link_libraries(rottr_android PRIVATE rottr_runtime android log OpenSLES)
+    target_link_libraries(rottr_android PRIVATE rottr_runtime android log OpenSLES vulkan aaudio)
     target_include_directories(rottr_android PRIVATE runtime/include runtime/src)
     target_compile_options(rottr_android PRIVATE -Wall -Wextra -Werror)
     set_target_properties(rottr_android PROPERTIES

@@ -85,3 +85,8 @@ extern "C" UINT32 audio_map_xaudio2_flags(UINT32 xaudio2Flags);
 
 // Convert AudioFormat to native format
 extern "C" AudioFormat audio_convert_format(UINT32 formatTag);
+
+// Phase 6: Low-latency audio control
+extern "C" void audio_set_low_latency(bool enable);
+extern "C" int audio_get_backend(void);  // 0=unknown, 1=OpenSL ES, 2=AAudio
+extern "C" uint64_t audio_get_underruns(void);

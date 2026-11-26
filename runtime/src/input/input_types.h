@@ -160,3 +160,27 @@ extern "C" UINT32 xinput_get_capabilities(UINT32 userIndex, UINT32 flags, void* 
 
 // XInputEnable
 extern "C" void xinput_enable(UINT32 enable);
+
+// --- Touch Controls (Phase 6) ---
+// Initialize touch control layout for screen size
+extern "C" void touch_controls_init(int width, int height);
+
+// Touch event handlers (called from Java/JNI)
+extern "C" void touch_controls_on_touch_down_c(int pointer_id, int x, int y);
+extern "C" void touch_controls_on_touch_move_c(int pointer_id, int x, int y);
+extern "C" void touch_controls_on_touch_up_c(int pointer_id, int x, int y);
+
+// Update gamepad state from touch controls
+extern "C" void touch_controls_update_gamepad_c(GamepadState* gamepad);
+
+// Render data for drawing touch control overlays
+struct TouchControlRenderData {
+    struct Circle {
+        float x, y, radius;
+        uint32_t color;
+        bool filled;
+    } circles[16];
+    int circle_count;
+};
+
+extern "C" void touch_controls_get_render_data_c(void* out_data);
