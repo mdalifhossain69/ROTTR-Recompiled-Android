@@ -26,3 +26,10 @@ The owner reports that the game supports both DirectX 11 and 12 on PC. DirectX 1
 target for the Android port, because the DXVK-style translation layers already used with
 Winlator handle it and it is the simpler path. DirectX 12 would need VKD3D-Proton on top.
 This choice has not yet been checked against the game binary.
+
+## Run
+```
+python3 scripts/lift_functions.py bin_input/ROTTR.exe --count 10
+```
+IR files land in `generated/lift/` on the owner's machine (not committed).
+Smallest functions (2 to 4 bytes) are padding or stubs, so the script samples 32 to 256 bytes.
