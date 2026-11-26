@@ -11,7 +11,7 @@ which targets a 32-bit Direct3D 9 game, so its lifter and runtime design do not 
 | 2 | Recover functions and lift them (candidate: Remill, which supports amd64); first step in [milestone 1](milestone1-lift.md) | ✅ Complete |
 | 3 | Windows API runtime for the imports found in phase 1 | ✅ Basic stubs implemented |
 | 4 | Graphics (Direct3D 11 to Vulkan), audio, input, video | ✅ Skeleton implementations complete |
-| 5 | Android ARM64 build, custom Vulkan driver loading | Not started |
+| 5 | Android ARM64 build, custom Vulkan driver loading | ✅ Native library builds |
 | 6 | Touch controls and performance | Not started |
 
 ## Phase 1

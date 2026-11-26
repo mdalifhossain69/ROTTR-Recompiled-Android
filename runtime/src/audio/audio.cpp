@@ -14,6 +14,10 @@
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
 #include <aaudio/AAudio.h>
+
+// Suppress deprecation warnings for OpenSL ES (deprecated in API 30 but still widely used)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #else
 // Stub definitions for non-Android builds
 typedef void* SLObjectItf;
@@ -437,3 +441,7 @@ extern "C" void xaudio2_mastering_voice_set_volume(void* voice, float volume, ui
     (void)voice; (void)operationSet;
     audio_set_volume(volume);
 }
+
+#if defined(__ANDROID__)
+#pragma GCC diagnostic pop
+#endif

@@ -62,7 +62,8 @@ int32_t AMotionEvent_getPointerCount(const AInputEvent* event) { (void)event; re
 float AMotionEvent_getX(const AInputEvent* event, size_t pointerIndex) { (void)event; (void)pointerIndex; return 0; }
 float AMotionEvent_getY(const AInputEvent* event, size_t pointerIndex) { (void)event; (void)pointerIndex; return 0; }
 int32_t AMotionEvent_getActionButton(const AInputEvent* event) { (void)event; return 0; }
-int64_t AInputEvent_getEventTime(const AInputEvent* event) { (void)event; return 0; }
+int64_t AKeyEvent_getEventTime(const AInputEvent* event) { (void)event; return 0; }
+int64_t AMotionEvent_getEventTime(const AInputEvent* event) { (void)event; return 0; }
 #endif
 
 // Internal input state
@@ -174,7 +175,7 @@ static void process_input_event(AInputEvent* event) {
         KeyEvent ke;
         ke.key = static_cast<AndroidKey>(keyCode);
         ke.pressed = pressed;
-        ke.timestamp = AInputEvent_getEventTime(event);
+        ke.timestamp = AKeyEvent_getEventTime(event);
 
         {
             std::lock_guard<std::mutex> lock(g_input.eventMutex);
@@ -219,7 +220,7 @@ static void process_input_event(AInputEvent* event) {
             TouchEvent te;
             te.x = static_cast<int>(AMotionEvent_getX(event, pointerIndex));
             te.y = static_cast<int>(AMotionEvent_getY(event, pointerIndex));
-            te.timestamp = AInputEvent_getEventTime(event);
+            te.timestamp = AMotionEvent_getEventTime(event);
 
             if (actionMasked == AMOTION_EVENT_ACTION_DOWN ||
                 actionMasked == AMOTION_EVENT_ACTION_POINTER_DOWN) {
