@@ -7,7 +7,7 @@ which targets a 32-bit Direct3D 9 game, so its lifter and runtime design do not 
 | Phase | Work | Status |
 |---|---|---|
 | 0 | Layout, build, executable report, tests | Done (no game needed) |
-| 1 | Analyse a user-supplied unprotected executable | Not started |
+| 1 | Analyse a user-supplied unprotected executable | In progress: [report](phase1-report.md) |
 | 2 | Recover functions and lift them (candidate: Remill, which supports amd64) | Not started |
 | 3 | Windows API runtime for the imports found in phase 1 | Not started |
 | 4 | Graphics (Direct3D 11 to Vulkan), audio, input, video | Not started |
@@ -23,3 +23,6 @@ which is the candidate input if the Steam file is wrapped.
 
 ## Rules
 Never commit executables, assets, or code generated from them.
+
+Then run `python3 scripts/functions.py path/to/ROTTR.exe --out generated/functions.csv`
+for a first map of function ranges.
