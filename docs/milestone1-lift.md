@@ -33,3 +33,18 @@ python3 scripts/lift_functions.py bin_input/ROTTR.exe --count 10
 ```
 IR files land in `generated/lift/` on the owner's machine (not committed).
 Smallest functions (2 to 4 bytes) are padding or stubs, so the script samples 32 to 256 bytes.
+
+## Compare (steps 4 and 5)
+```
+pip install --break-system-packages unicorn
+python3 scripts/build_harness.py
+python3 scripts/compare_lifted.py bin_input/ROTTR.exe --inputs 200
+```
+- `build_harness.py` compiles the lifted IR for the machine it runs on and links it with
+  `harness/shim.cpp`, which implements Remill's runtime helpers.
+- `compare_lifted.py` runs the original bytes in the Unicorn x86-64 emulator and the lifted
+  code natively, from identical random registers, flags, vector registers and memory.
+- Only functions that make no calls are compared. Runs where both sides fault on a bad
+  address are counted separately. Runs that use undefined values are not counted as failures.
+- `tests/test_harness.py` checks the harness itself with a synthetic file: a correct function
+  must match, a wrong one must be caught.
