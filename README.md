@@ -4,6 +4,8 @@ Goal: run a legally owned Steam copy of Rise of the Tomb Raider on an ARM64 Andr
 
 **Status: playable through translation layers on one tested device (see `docs/test-results.md`). No static port exists here.**
 
+Working setup: [Winlator Ludashi 5.0](docs/winlator-ludashi-5.0.md)
+
 ## Rules
 - No game files, assets, executables or Steam files in this repository.
 - No DRM or ownership-check bypassing. Use your own Steam account.
