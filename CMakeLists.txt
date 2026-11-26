@@ -3,7 +3,7 @@ project(rottr_recomp C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-add_library(rottr_runtime STATIC runtime/src/guest.c)
+add_library(rottr_runtime STATIC runtime/src/guest.c runtime/src/win32_stubs.cpp runtime/src/remill_intrinsics.cpp)
 target_include_directories(rottr_runtime PUBLIC runtime/include)
 target_compile_options(rottr_runtime PRIVATE -Wall -Wextra -Werror)
 
