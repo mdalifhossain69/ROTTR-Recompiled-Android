@@ -12,7 +12,8 @@
 #include <signal.h>
 
 // Must match Python ctypes Snapshot in compare_lifted.py:
-//   ("gpr", c_uint64 * 16), ("flags", c_uint8 * 8), ("xmm", (c_uint8 * 16) * 16)
+//   ("gpr", c_uint64 * 16), ("flags", c_uint8 * 8),
+//   ("xmm", (c_uint8 * 16) * 16)
 struct Snapshot {
     uint64_t gpr[16];
     uint8_t  flags[8];
@@ -88,20 +89,24 @@ extern "C" int harness_run(void* func_addr, uint64_t rva,
     sigaction(SIGSEGV, &sa, &old_sa);
 
     int rc = 0;
+    RemillState state;
+    std::memset(&state, 0, sizeof(state));
+    uint64_t eflags = 0x2;  // reserved bit always set
+    uint64_t final_eflags = 0;
+    static const int flag_bits[] = {0, 2, 4, 6, 7, 10, 11};
+    typedef void (*lifted_fn)(void*);
+    lifted_fn fn = nullptr;
+
     if (sigsetjmp(fault_jmp, 1) != 0) {
         rc = 1;  // memory fault
         goto done;
     }
 
     // Build Remill state from input snapshot
-    RemillState state;
-    std::memset(&state, 0, sizeof(state));
     std::memcpy(state.gpr, snap_in->gpr, sizeof(state.gpr));
     state.rip = rva;
 
     // EFLAGS: bits 0,2,4,6,7,10,11 = cf,pf,af,zf,sf,df,of
-    uint64_t eflags = 0x2;  // reserved bit always set
-    static const int flag_bits[] = {0, 2, 4, 6, 7, 10, 11};
     for (int i = 0; i < 7; i++) {
         if (snap_in->flags[i]) {
             eflags |= (1ULL << flag_bits[i]);
@@ -114,14 +119,13 @@ extern "C" int harness_run(void* func_addr, uint64_t rva,
     }
 
     // Call the lifted Remill function: void sub_xxx(void* state)
-    typedef void (*lifted_fn)(void*);
-    lifted_fn fn = static_cast<lifted_fn>(func_addr);
+    fn = reinterpret_cast<lifted_fn>(func_addr);
     fn(&state);
 
     // Read state back into output snapshot
     std::memcpy(snap_out->gpr, state.gpr, sizeof(snap_out->gpr));
 
-    uint64_t final_eflags = state.rflags;
+    final_eflags = state.rflags;
     for (int i = 0; i < 7; i++) {
         snap_out->flags[i] = (final_eflags >> flag_bits[i]) & 1;
     }
