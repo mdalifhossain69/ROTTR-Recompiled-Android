@@ -4,47 +4,47 @@
 // lifted .o files to link and run on an aarch64 host.
 //
 // The `memory` pointer passed to read/write intrinsics is an opaque guest
-// memory context managed by the shim. For now we use a flat 1 MB buffer.
+// memory context managed by the shim (harness/shim.cpp). The shim provides
+// a flat 1 MB buffer and passes it as the third argument to lifted functions.
 
 #include <cstdint>
 #include <cstring>
 
-static uint8_t guest_memory[0x100000];  // 1 MB flat guest memory
-
 extern "C" {
 
 // ---- Memory reads -------------------------------------------------------
+// The `memory` argument is the guest memory buffer passed from the shim.
 uint8_t  __remill_read_memory_8 (void* memory, uint64_t address) {
-    uint8_t v; memcpy(&v, guest_memory + (address & 0xFFFFF), 1); return v;
+    uint8_t v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 1); return v;
 }
 uint16_t __remill_read_memory_16(void* memory, uint64_t address) {
-    uint16_t v; memcpy(&v, guest_memory + (address & 0xFFFFF), 2); return v;
+    uint16_t v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 2); return v;
 }
 uint32_t __remill_read_memory_32(void* memory, uint64_t address) {
-    uint32_t v; memcpy(&v, guest_memory + (address & 0xFFFFF), 4); return v;
+    uint32_t v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 4); return v;
 }
 uint64_t __remill_read_memory_64(void* memory, uint64_t address) {
-    uint64_t v; memcpy(&v, guest_memory + (address & 0xFFFFF), 8); return v;
+    uint64_t v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 8); return v;
 }
 float    __remill_read_memory_f32(void* memory, uint64_t address) {
-    float v; memcpy(&v, guest_memory + (address & 0xFFFFF), 4); return v;
+    float v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 4); return v;
 }
 
 // ---- Memory writes ------------------------------------------------------
 void* __remill_write_memory_8 (void* memory, uint64_t address, uint8_t  value) {
-    memcpy(guest_memory + (address & 0xFFFFF), &value, 1); return memory;
+    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 1); return memory;
 }
 void* __remill_write_memory_16(void* memory, uint64_t address, uint16_t value) {
-    memcpy(guest_memory + (address & 0xFFFFF), &value, 2); return memory;
+    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 2); return memory;
 }
 void* __remill_write_memory_32(void* memory, uint64_t address, uint32_t value) {
-    memcpy(guest_memory + (address & 0xFFFFF), &value, 4); return memory;
+    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 4); return memory;
 }
 void* __remill_write_memory_64(void* memory, uint64_t address, uint64_t value) {
-    memcpy(guest_memory + (address & 0xFFFFF), &value, 8); return memory;
+    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 8); return memory;
 }
 void* __remill_write_memory_f32(void* memory, uint64_t address, float value) {
-    memcpy(guest_memory + (address & 0xFFFFF), &value, 4); return memory;
+    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 4); return memory;
 }
 
 // ---- Control flow stubs -------------------------------------------------

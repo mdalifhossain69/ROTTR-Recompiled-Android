@@ -37,7 +37,7 @@ def main(argv=None):
     p.add_argument("--lift-dir", default=os.path.join(ROOT, "generated/lift"))
     p.add_argument("--out", default=os.path.join(ROOT, "generated/harness"))
     p.add_argument("--remill-include", default=os.path.join(ROOT, "tools/remill-src/include"))
-    p.add_argument("--remill-lib", default=os.path.join(ROOT, "tools/remill-build/lib"))
+    p.add_argument("--remill-lib", default=os.path.join(ROOT, "tools/remill-src/build/lib"))
     p.add_argument("--clang")
     p.add_argument("--cxx")
     args = p.parse_args(argv)
@@ -78,11 +78,37 @@ def main(argv=None):
             f.write(f'extern "C" void *{sym}(void *, uint64_t, void *m) '
                     f'{{ harness_note_external(); return m; }}\n')
 
+    # Remill static libraries
+    remill_libs = [
+        os.path.join(args.remill_lib, "Arch/X86/libremill_arch_x86.a"),
+        os.path.join(args.remill_lib, "Arch/libremill_arch.a"),
+        os.path.join(args.remill_lib, "BC/libremill_bc.a"),
+        os.path.join(args.remill_lib, "OS/libremill_os.a"),
+        os.path.join(args.remill_lib, "Version/libremill_version.a"),
+    ]
+
+    # Compile runtime sources (remill_intrinsics.cpp, guest.c) - skip win32_stubs.cpp for test
+    runtime_objects = []
+    for src in [
+        os.path.join(ROOT, "runtime/src/remill_intrinsics.cpp"),
+        os.path.join(ROOT, "runtime/src/guest.c"),
+    ]:
+        obj = os.path.join(args.out, os.path.basename(src) + ".o")
+        if src.endswith(".cpp"):
+            run([cxx, "-std=c++17", "-O2", "-fPIC", "-w",
+                 f"-I{args.remill_include}", f"-I{os.path.join(ROOT, 'runtime/include')}",
+                 "-DADDRESS_SIZE_BITS=64", "-c", src, "-o", obj])
+        else:
+            run(["clang", "-O2", "-fPIC", "-w",
+                 f"-I{os.path.join(ROOT, 'runtime/include')}",
+                 "-c", src, "-o", obj])
+        runtime_objects.append(obj)
+
     lib = os.path.join(args.out, "libharness.so")
     run([cxx, "-std=c++17", "-O2", "-fPIC", "-shared", "-w",
-         f"-I{args.remill_include}", f"-L{args.remill_lib}", "-lremill",
+         f"-I{args.remill_include}",
          "-DADDRESS_SIZE_BITS=64",
-         os.path.join(ROOT, "harness/shim.cpp"), stubs, *objects, "-o", lib])
+         os.path.join(ROOT, "harness/shim.cpp"), stubs, *objects, *runtime_objects, *remill_libs, "-o", lib])
     print(f"built {lib}: {len(defined)} lifted functions, {len(declared - defined)} stubbed callees")
     return 0
 
