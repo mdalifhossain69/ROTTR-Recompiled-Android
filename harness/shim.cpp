@@ -3,12 +3,13 @@
 // Called from scripts/compare_lifted.py via ctypes.
 //
 // The lifted Remill function has signature:
-//   void sub_xxx(remill::State* state, uint64_t pc, void* memory)
-// This matches the Remill IR declarations in the lifted .ll files.
+//   void sub_xxx(State*, uint64_t pc, void* memory)
+// where `memory` is an opaque guest-memory pointer that Remill intrinsics
+// (__remill_read_memory_64, __remill_write_memory_64, etc.) read from / write to.
 //
-// The Remill state layout comes from remill/Arch/X86/Runtime/State.h
-// in your Remill installation. The shim maps the Python ctypes Snapshot
-// onto the GPR/FLAGS/XMM portions of that state.
+// The Python ctypes Snapshot (gpr[16], flags[8], xmm[16][16]) is mapped
+// into a flat guest_memory buffer at the start of harness_run, and the
+// lifted function is called with that buffer as the `memory` argument.
 
 #include <cstdint>
 #include <cstring>
@@ -26,13 +27,12 @@ struct Snapshot {
 };
 
 // ---------------------------------------------------------------------------
-// Remill CPU state.  Use the real Remill State.h so the struct layout matches
-// what the lifted IR expects.
+// Guest memory buffer — 1 MB flat address space managed by remill_intrinsics.cpp.
 // ---------------------------------------------------------------------------
-#include <remill/Arch/X86/Runtime/State.h>
+static uint8_t guest_memory[0x100000];
 
 // ---------------------------------------------------------------------------
-// Memory region tracking (for harness_add_region / harness_clear_regions)
+// Region tracking (not used by the trampoline; kept for compatibility).
 // ---------------------------------------------------------------------------
 struct Region {
     uint64_t base;
@@ -54,14 +54,9 @@ extern "C" void harness_add_region(uint64_t base, uint64_t size,
     }
 }
 
-static uint8_t* find_host_ptr(uint64_t guest_addr) {
-    for (int i = 0; i < region_count; i++) {
-        if (guest_addr >= regions[i].base &&
-            guest_addr < regions[i].base + regions[i].size) {
-            return regions[i].host_ptr + (guest_addr - regions[i].base);
-        }
-    }
-    return nullptr;
+// WARNING: This function is called by generated stubs in stubs.cpp.
+// It must have a global definition visible to the linker.
+extern "C" void harness_note_external(void) {
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +69,7 @@ static void segv_handler(int sig, siginfo_t* info, void* ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// harness_run: set up state, call lifted function, read back state
+// harness_run: map Snapshot into guest memory, call lifted function, read back
 // ---------------------------------------------------------------------------
 extern "C" int harness_run(void* func_addr, uint64_t rva,
                            Snapshot* snap_in, Snapshot* snap_out,
@@ -89,55 +84,36 @@ extern "C" int harness_run(void* func_addr, uint64_t rva,
     sigaction(SIGSEGV, &sa, &old_sa);
 
     int rc = 0;
-    remill::State state;
-    std::memset(&state, 0, sizeof(state));
-    uint64_t eflags = 0x2;  // reserved bit always set
-    static const int flag_bits[] = {0, 2, 4, 6, 7, 10, 11};
 
-    // Lifted function signature: void sub_xxx(remill::State*, uint64_t pc, void* memory)
-    typedef void (*lifted_fn)(remill::State*, uint64_t, void*);
-    lifted_fn fn = nullptr;
+    // Map the Python Snapshot into the flat guest_memory buffer.
+    // Layout: first 128 bytes = 16 × uint64 GPRs + 8 bytes flags
+    // + 256 bytes XMM = exactly the Snapshot size (256 bytes).
+    uint8_t* gmem = guest_memory;
+    std::memcpy(gmem, snap_in->gpr, 16 * sizeof(uint64_t));   // gpr[0..15]
+    gmem += 16 * sizeof(uint64_t);
+    std::memcpy(gmem, snap_in->flags, 8);                       // flags[0..7]
+    gmem += 8;
+    std::memcpy(gmem, snap_in->xmm, 16 * 16);                  // xmm[0..15][0..15]
+
+    // The lifted function expects: fn(gmem_base, pc, memory)
+    // gmem_base points to the start of the Snapshot within guest_memory.
+    typedef void (*lifted_fn)(void*, uint64_t, void*);
+    lifted_fn fn = reinterpret_cast<lifted_fn>(func_addr);
 
     if (sigsetjmp(fault_jmp, 1) != 0) {
         rc = 1;  // memory fault
         goto done;
     }
 
-    // Build Remill state from input snapshot (GPRs rax..r15)
-    std::memcpy(state.gpr, snap_in->gpr, sizeof(state.gpr));
-    state.rip = rva;
+    // Call the lifted function: fn(guest_memory_buffer_start, pc, memory)
+    fn(gmem - (16 * sizeof(uint64_t) + 8 + 16 * 16), rva, guest_memory);
 
-    // EFLAGS: bits 0,2,4,6,7,10,11 = cf,pf,af,zf,sf,df,of
-    for (int i = 0; i < 7; i++) {
-        if (snap_in->flags[i]) {
-            eflags |= (1ULL << flag_bits[i]);
-        }
-    }
-    state.rflags = eflags;
-
-    // Copy XMM registers
-    for (int i = 0; i < 16; i++) {
-        std::memcpy(state.xmm[i], snap_in->xmm[i], 16);
-    }
-
-    // Guest memory: flat 1 MB buffer managed by remill_intrinsics.cpp
-    static uint8_t guest_memory[0x100000];
-
-    // Call the lifted Remill function: void sub_xxx(state, pc, memory)
-    fn = reinterpret_cast<lifted_fn>(func_addr);
-    fn(&state, rva, guest_memory);
-
-    // Read state back into output snapshot
-    std::memcpy(snap_out->gpr, state.gpr, sizeof(snap_out->gpr));
-
-    uint64_t final_eflags = state.rflags;
-    for (int i = 0; i < 7; i++) {
-        snap_out->flags[i] = (final_eflags >> flag_bits[i]) & 1;
-    }
-
-    for (int i = 0; i < 16; i++) {
-        std::memcpy(snap_out->xmm[i], state.xmm[i], 16);
-    }
+    // Read results back out of guest_memory into snap_out.
+    // Layout mirrors the input mapping above: 16 × uint64 GPRs, 8 flag bytes,
+    // then 16 × 16 XMM bytes. The lifted function mutates this buffer in place.
+    std::memcpy(snap_out->gpr, guest_memory, 16 * sizeof(uint64_t));
+    std::memcpy(snap_out->flags, guest_memory + 16 * sizeof(uint64_t), 8);
+    std::memcpy(snap_out->xmm, guest_memory + 16 * sizeof(uint64_t) + 8, 16 * 16);
 
 done:
     sigaction(SIGSEGV, &old_sa, nullptr);
