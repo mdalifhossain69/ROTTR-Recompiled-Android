@@ -1,0 +1,15 @@
+# Never commit game or Steam files
+game/
+steamapps/
+wineprefix/
+*.exe
+*.dll
+*.tiger
+*.apk
+*.log
+bin_input/*
+!bin_input/README.md
+generated/
+build/
+__pycache__/
+tools/remill-src/
