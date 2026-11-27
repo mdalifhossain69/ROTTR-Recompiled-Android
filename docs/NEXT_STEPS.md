@@ -1,3 +1,22 @@
+# Proton ARM64EC package import foundation (2026-11-27)
+
+The Android app now has a SAF-based WCP import path for a Proton ARM64EC component and a separate FEXCore ARM64EC component. The importer accepts tar+Zstandard and tar+XZ WCP packages, checks the root `profile.json` type, rejects path traversal and archive links, enforces entry/unpacked-size limits, and stages installation before replacing the previous package. FEXCore imports must contain both `system32/libarm64ecfex.dll` and `system32/libwow64fex.dll`; those DLLs are copied into the app's runtime-prefix Windows system32 directory.
+
+The app settings now expose **Install runtime** and the boot diagnostics show whether Proton and FEXCore packages have been imported.
+
+## What is not integrated yet
+
+This is a package installer, not a running Proton container. It does not yet launch Wine/wineserver, initialize a Wine prefix with `wineboot`, establish the Android bionic environment, load the ARM64EC FEX unixlib, mount game files into a Windows drive, or connect DXVK to the app's Vulkan surface. The native x64 execution capability therefore correctly remains **NOT LINKED**, and PLAY does not claim that the game is runnable.
+
+The saved Winlator setup records Proton 10.0-6 ARM64EC, but the public Winlator component catalog currently exposes a generic Proton 10 ARM64EC entry and Proton 10.0-4 ARM64EC; it does not list an exact 10.0-6 package at the time of this change. Import the exact 10.0-6 WCP if you have it. Do not silently substitute a different Wine build.
+
+## Next required work
+
+1. Add a supported Android process/bootstrap path for the imported bionic Proton runtime and verify `wineboot`/wineserver on-device.
+2. Wire the FEXCore ARM64EC DLLs into the Wine WOW64 loader and verify an x64 PE test executable.
+3. Mount the selected ROTTR folder as a Windows drive and launch the executable without bypassing Steam/EOS ownership checks.
+4. Integrate DXVK and share Vulkan device/surface ownership with the host app; test a real game frame.
+
 # Windows x86-64 execution backend foundation (2026-11-27)
 
 The Android native library now reports the CPU execution state separately from the PE header check and Vulkan surface state. On the current APK it reports Android ARM64 as the host, Windows x86-64 as the executable architecture, and **x86-64 backend NOT LINKED**. A successful PE32+ check is only file identification; it is not execution.
