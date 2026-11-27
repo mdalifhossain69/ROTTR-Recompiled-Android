@@ -21,7 +21,7 @@ int main() {
         0x50,
         0x48,0x31,0xc0,
         0x5a,
-        0x48,0x83,0xfa,0x0c, // intentionally unsupported immediate form below
+        0x48,0x83,0xfa,0x0c,
         0x75,0x01,0xf4,0xf4
     };
     std::array<uint8_t, 256> memory{};
@@ -30,8 +30,8 @@ int main() {
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
     const rottr::X64GuestMemory guest{0x1000, memory.data(), memory.size(), true, true};
     auto result = rottr::runX64Interpreter(cpu, guest, 64);
-    if (!expect(result.reason == rottr::X64StopReason::UnsupportedInstruction,
-                "unsupported immediate compare must fail closed") ||
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "sign-extended immediate CMP and conditional branch must execute") ||
         !expect(cpu.gpr[2] == 12, "PUSH/POP must preserve the computed value") ||
         !expect(cpu.gpr[0] == 0, "XOR must clear RAX") ||
         !expect(rottr::hasX64InstructionInterpreter(), "interpreter capability must be reported")) {
