@@ -258,11 +258,11 @@ Use these status labels consistently:
 
 ## 7. Immediate next task
 
-**Do not start by adding more Vulkan draw primitives.** The immediate next task is:
+**Do not start by adding more Vulkan draw primitives.** The architecture review is recorded in [`docs/adr/0001-x64-execution-android-arm64.md`](docs/adr/0001-x64-execution-android-arm64.md). It deliberately avoids introducing a GPLv2 CPU engine into this MIT-licensed project or reintroducing the rejected FEXCore/Proton stack.
 
-> Produce an architecture decision record for x86-64 guest execution on Android ARM64, then build the smallest on-device proof of concept that executes a controlled x86-64 test program.
+The next implementation task is a project-owned x86-64 decoder and typed guest IR, followed by a bounded interpreter used as the correctness oracle. Add instruction coverage incrementally and reject unsupported encodings explicitly. Only after the interpreter passes differential tests should AArch64 code generation and a code cache begin.
 
-This resolves the fundamental CPU execution question before the team invests further in loader and Windows API work. In parallel, preserve the existing D3D11/Vulkan backend and its tests; do not claim it is connected to ROTTR until real game commands flow through it.
+This is a CPU-engine milestone, not a Windows game boot. PE loading, Windows API compatibility, dependency loading and the game graphics path remain separate milestones. Preserve the existing D3D11/Vulkan backend and its tests; do not claim it is connected to ROTTR until real game commands flow through it.
 
 ## 8. Definition of success
 
