@@ -100,14 +100,18 @@ static void initialize_window(int width, int height, ANativeWindow* window) {
     g_state.screenHeight = height;
 
     LOGI("JNI: initializing window subsystems %dx%d", width, height);
+    LOGI("JNI: ANativeWindow format=%d", ANativeWindow_getFormat(window));
 
-    video_init(static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+    const bool videoOk = video_init(static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+    LOGI("JNI: video_init returned %s", videoOk ? "true" : "false");
     video_set_native_window(window);
-    if (!graphics_init(width, height, window)) {
-        LOGE("JNI: graphics_init failed");
+    const bool graphicsOk = graphics_init(width, height, window);
+    LOGI("JNI: graphics_init returned %s", graphicsOk ? "true" : "false");
+    if (!graphicsOk) {
+        LOGE("JNI: graphics_init failed; rendering cannot start");
     }
 
-    g_state.windowInitialized = true;
+    g_state.windowInitialized = videoOk && graphicsOk;
 }
 
 static void release_window(void) {
