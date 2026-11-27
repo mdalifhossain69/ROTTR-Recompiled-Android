@@ -202,3 +202,18 @@ ctest --preset linux-debug
 - `docs/milestone1-lift.md` — Milestone 1 details and exit criteria
 - `docs/phase1-report.md` — recorded executable report
 - `scripts/doctor.py` — build-tool readiness check
+
+---
+
+# Native Android D3D11 → Vulkan port pivot (2026-11-27)
+
+The target is a native ARM64 Android port, not a Winlator/Proton frontend. Proton/FEXCore package installation is not part of the required player experience.
+
+First native graphics milestone:
+- Added runtime/src/graphics/dxgi_vk_format.* with DXGI-to-Vulkan format mappings for common game formats.
+- Added BC-compressed block row-pitch/image-size handling with overflow checks.
+- Added host unit tests and CI execution before the Android APK build.
+
+This is only the format-translation foundation. D3D11 resource/device/context objects, DXBC-to-SPIR-V shader translation, pipeline state mapping, command submission, and ARM64 game-code recompilation are still required. The diagnostic Vulkan renderer remains clear-only and does not render game assets.
+
+See docs/native-d3d11-vulkan.md for the native architecture and remaining work.
