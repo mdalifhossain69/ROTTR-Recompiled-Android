@@ -112,6 +112,7 @@ public class MainActivity extends Activity {
 
     private void showLauncher() {
         bootScreenVisible = false;
+        activeBoot = null;
         launcher = new LauncherScreen(this, new LauncherScreen.Listener() {
             @Override public void onChooseGameFolder() { chooseGameFolder(); }
             @Override public void onPlay() { onPlayPressed(); }
