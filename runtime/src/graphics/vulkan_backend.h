@@ -28,6 +28,11 @@ public:
     bool transitionTexture(uint64_t handle, VkImageLayout target);
     VkShaderModule createShaderModule(const uint32_t* spirvWords, size_t wordCount);
     void destroyShaderModule(VkShaderModule module);
+    // Creates a real Vulkan graphics pipeline using caller-owned shader modules,
+    // pipeline layout, render pass, and fixed-function state. Pointers are consumed
+    // synchronously; the returned pipeline is owned by this backend.
+    VkPipeline createGraphicsPipeline(const VkGraphicsPipelineCreateInfo& createInfo);
+    void destroyGraphicsPipeline(VkPipeline pipeline);
     bool draw(uint32_t, uint32_t, uint32_t, uint32_t) override;
     bool drawIndexed(uint32_t, uint32_t, int32_t, uint32_t) override;
 
@@ -55,6 +60,8 @@ private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkQueue queue_ = VK_NULL_HANDLE;
     VkCommandPool pool_ = VK_NULL_HANDLE;
+    VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
+    std::vector<VkPipeline> pipelines_;
     mutable std::mutex mutex_;
     uint64_t nextHandle_ = 1;
     std::unordered_map<uint64_t, Allocation> allocations_;
