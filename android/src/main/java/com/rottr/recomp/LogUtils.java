@@ -27,6 +27,8 @@ import java.util.Locale;
 public final class LogUtils {
     private static final String TAG = "ROTTR-Diagnostics";
     private static final String LOG_DIR_NAME = "ROTTR-logs";
+    // Keep diagnostics bounded even if a device or native component becomes noisy.
+    private static final long MAX_LOG_BYTES = 8L * 1024L * 1024L;
     private static PrintWriter writer;
     private static File logFile;
     private static java.lang.Process logcatProcess;
@@ -140,12 +142,44 @@ public final class LogUtils {
         return writer != null;
     }
 
+    /**
+     * Writes captured logcat lines to the file WITHOUT forwarding them back to
+     * Android Log. Forwarding would make our own logcat reader capture its output
+     * forever, creating an unbounded feedback loop.
+     *
+     * @return false when logging has reached its size limit or the writer is closed.
+     */
+    private static synchronized boolean appendCapturedLine(String message) {
+        if (writer == null || logFile == null) return false;
+        if (logFile.length() >= MAX_LOG_BYTES) {
+            writer.flush();
+            writer.close();
+            writer = null;
+            return false;
+        }
+        writer.println(timestamp() + " " + message);
+        writer.flush();
+        if (logFile.length() >= MAX_LOG_BYTES) {
+            writer.close();
+            writer = null;
+            return false;
+        }
+        return true;
+    }
+
     private static synchronized void append(String message) {
         String line = timestamp() + " " + message;
         if (writer != null) {
-            writer.println(line);
-            writer.flush();
+            if (logFile != null && logFile.length() >= MAX_LOG_BYTES) {
+                writer.flush();
+                writer.close();
+                writer = null;
+            } else {
+                writer.println(line);
+                writer.flush();
+            }
         }
+        // This is intentionally not mirrored by appendCapturedLine().
         Log.d(TAG, message);
     }
 
@@ -195,7 +229,14 @@ public final class LogUtils {
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(logcatProcess.getInputStream()))) {
                     String line;
-                    while ((line = reader.readLine()) != null) append("LOGCAT " + line);
+                    while ((line = reader.readLine()) != null) {
+                        // Never call append() here: that mirrors to logcat and
+                        // would recursively capture this same line.
+                        if (!appendCapturedLine("LOGCAT " + line)) {
+                            Log.w(TAG, "Diagnostic log reached 8 MiB limit; stopping logcat capture");
+                            break;
+                        }
+                    }
                 }
                 append("Process logcat capture ended");
             } catch (Exception e) {
