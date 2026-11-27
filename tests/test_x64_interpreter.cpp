@@ -34,6 +34,8 @@ int main() {
                 "sign-extended immediate CMP and conditional branch must execute") ||
         !expect(cpu.gpr[2] == 12, "PUSH/POP must preserve the computed value") ||
         !expect(cpu.gpr[0] == 0, "XOR must clear RAX") ||
+        !expect((cpu.rflags & (1ULL << 6)) != 0, "CMP must set ZF for equal operands") ||
+        !expect(cpu.rip == 0x1023, "JNE must not branch when CMP operands are equal") ||
         !expect(rottr::hasX64InstructionInterpreter(), "interpreter capability must be reported")) {
         return 1;
     }
