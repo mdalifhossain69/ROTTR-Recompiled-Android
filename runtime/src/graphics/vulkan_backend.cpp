@@ -427,9 +427,17 @@ VkPipeline VulkanBackend::createGraphicsPipeline(const VkGraphicsPipelineCreateI
     return pipeline;
 }
 
+uint64_t VulkanBackend::pipelineId(VkPipeline pipeline) {
+    static_assert(sizeof(pipeline) <= sizeof(uint64_t), "Vulkan pipeline handle is too large");
+    uint64_t value = 0;
+    std::memcpy(&value, &pipeline, sizeof(pipeline));
+    return value;
+}
+
 void VulkanBackend::destroyGraphicsPipeline(VkPipeline pipeline) {
     if (pipeline == VK_NULL_HANDLE) return;
     std::lock_guard<std::mutex> lock(mutex_);
+    if (renderPassActive_) return;
     const auto it = std::find(pipelines_.begin(), pipelines_.end(), pipeline);
     if (it == pipelines_.end()) return;
     vkDestroyPipeline(device_, pipeline, nullptr);
@@ -465,7 +473,9 @@ bool VulkanBackend::endRenderPass() {
 
 bool VulkanBackend::bindGraphicsPipeline(uint64_t pipeline) {
     std::lock_guard<std::mutex> lock(mutex_);
-    const VkPipeline candidate = static_cast<VkPipeline>(pipeline);
+    VkPipeline candidate = VK_NULL_HANDLE;
+    static_assert(sizeof(candidate) <= sizeof(pipeline), "Vulkan pipeline handle is too large");
+    std::memcpy(&candidate, &pipeline, sizeof(candidate));
     if (candidate == VK_NULL_HANDLE || std::find(pipelines_.begin(), pipelines_.end(), candidate) == pipelines_.end()) return false;
     boundPipeline_ = candidate;
     if (renderPassActive_) vkCmdBindPipeline(drawCommand_, VK_PIPELINE_BIND_POINT_GRAPHICS, candidate);
