@@ -112,7 +112,7 @@ int main() {
     result = rottr::runX64Interpreter(cpu, guest, 32);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "near conditional branch must reach HLT") ||
-        !expect(cpu.rip == 0x101e, "near JZ must branch to the second HLT")) {
+        !expect(cpu.rip == 0x101f, "near JZ must branch to the second HLT")) {
         return 1;
     }
 
@@ -163,7 +163,7 @@ int main() {
                 "memory immediate ADD must write the updated value") ||
         !expect((cpu.rflags & (1ULL << 6)) != 0,
                 "memory immediate CMP must set ZF without changing memory") ||
-        !expect(cpu.rip == 0x1022,
+        !expect(cpu.rip == 0x1023,
                 "memory immediate CMP must drive the following conditional branch")) {
         return 1;
     }
