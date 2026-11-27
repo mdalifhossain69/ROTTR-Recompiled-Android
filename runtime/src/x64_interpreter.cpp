@@ -13,6 +13,33 @@ constexpr uint64_t kFlagAuxiliary = 1ULL << 4;
 constexpr uint64_t kFlagZero = 1ULL << 6;
 constexpr uint64_t kFlagSign = 1ULL << 7;
 constexpr uint64_t kFlagOverflow = 1ULL << 11;
+
+bool conditionTrue(const rottr_cpu& cpu, unsigned condition) {
+    const bool cf = (cpu.rflags & kFlagCarry) != 0;
+    const bool pf = (cpu.rflags & kFlagParity) != 0;
+    const bool zf = (cpu.rflags & kFlagZero) != 0;
+    const bool sf = (cpu.rflags & kFlagSign) != 0;
+    const bool of = (cpu.rflags & kFlagOverflow) != 0;
+    switch (condition & 0x0fU) {
+        case 0x0: return of;
+        case 0x1: return !of;
+        case 0x2: return cf;
+        case 0x3: return !cf;
+        case 0x4: return zf;
+        case 0x5: return !zf;
+        case 0x6: return cf || zf;
+        case 0x7: return !cf && !zf;
+        case 0x8: return sf;
+        case 0x9: return !sf;
+        case 0xa: return pf;
+        case 0xb: return !pf;
+        case 0xc: return sf != of;
+        case 0xd: return sf == of;
+        case 0xe: return zf || (sf != of);
+        case 0xf: return !zf && (sf == of);
+        default: return false;
+    }
+}
 constexpr uint64_t kArithmeticFlags = kFlagCarry | kFlagParity | kFlagAuxiliary |
                                       kFlagZero | kFlagSign | kFlagOverflow;
 constexpr uint64_t kReservedFlag = 1ULL << 1;
@@ -303,16 +330,33 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                 ++callDepth;
             }
             cpu.rip = target;
-        } else if (opcode == 0xeb || opcode == 0x74 || opcode == 0x75) {
+        } else if (opcode == 0x0f) {
+            uint8_t secondOpcode = 0;
+            int32_t displacement = 0;
+            if (!decoder.byte(secondOpcode))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated 0F opcode");
+            if (secondOpcode < 0x80 || secondOpcode > 0x8f)
+                return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
+                            "unsupported two-byte opcode");
+            if (!decoder.immediate(displacement))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated near conditional branch");
+            cpu.rip = conditionTrue(cpu, secondOpcode & 0x0fU) ?
+                    decoder.next() + static_cast<int64_t>(displacement) : decoder.next();
+        } else if (opcode >= 0x70 && opcode <= 0x7f) {
             int8_t displacement = 0;
             if (!decoder.immediate(displacement))
                 return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
-                            "truncated short branch");
-            const bool take = opcode == 0xeb ||
-                    (opcode == 0x74 && (cpu.rflags & kFlagZero) != 0) ||
-                    (opcode == 0x75 && (cpu.rflags & kFlagZero) == 0);
-            cpu.rip = take ? decoder.next() + static_cast<int64_t>(displacement) :
-                             decoder.next();
+                            "truncated short conditional branch");
+            cpu.rip = conditionTrue(cpu, opcode & 0x0fU) ?
+                    decoder.next() + static_cast<int64_t>(displacement) : decoder.next();
+        } else if (opcode == 0xeb) {
+            int8_t displacement = 0;
+            if (!decoder.immediate(displacement))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated short JMP");
+            cpu.rip = decoder.next() + static_cast<int64_t>(displacement);
         } else if (opcode == 0x81 || opcode == 0x83) {
             if (!rexW)
                 return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
@@ -358,8 +402,10 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
             cpu.rip = decoder.next();
         } else if (opcode == 0x89 || opcode == 0x8b ||
                    opcode == 0x01 || opcode == 0x03 || opcode == 0x29 ||
-                   opcode == 0x2b || opcode == 0x31 || opcode == 0x33 ||
-                   opcode == 0x39 || opcode == 0x3b) {
+                   opcode == 0x2b || opcode == 0x09 || opcode == 0x0b ||
+                   opcode == 0x21 || opcode == 0x23 || opcode == 0x31 ||
+                   opcode == 0x33 || opcode == 0x39 || opcode == 0x3b ||
+                   opcode == 0x85) {
             if (!rexW)
                 return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
                             "only 64-bit MOV and arithmetic encodings are supported");
@@ -388,6 +434,7 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                 }
             } else {
                 const bool destinationIsReg = opcode == 0x03 || opcode == 0x2b ||
+                                              opcode == 0x0b || opcode == 0x23 ||
                                               opcode == 0x33 || opcode == 0x3b;
                 const uint64_t sourceValue = destinationIsReg ? 0 : reg(cpu, regField);
                 uint64_t rmValue = 0;
@@ -401,12 +448,22 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                 switch (opcode) {
                     case 0x01: case 0x03: result = add64(cpu, left, right); break;
                     case 0x29: case 0x2b: result = sub64(cpu, left, right); break;
+                    case 0x09: case 0x0b:
+                        result = left | right;
+                        setLogicFlags(cpu, result);
+                        break;
+                    case 0x21: case 0x23:
+                        result = left & right;
+                        setLogicFlags(cpu, result);
+                        break;
                     case 0x31: case 0x33:
                         result = left ^ right;
                         setLogicFlags(cpu, result);
                         break;
-                    case 0x39: case 0x3b:
-                        (void) sub64(cpu, left, right);
+                    case 0x39: case 0x3b: case 0x85:
+                        (void) sub64(cpu, opcode == 0x85 ? (left & right) : left,
+                                     opcode == 0x85 ? 0 : right);
+                        if (opcode == 0x85) setLogicFlags(cpu, left & right);
                         writeResult = false;
                         break;
                     default: break;
