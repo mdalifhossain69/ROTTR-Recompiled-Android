@@ -21,7 +21,7 @@ This file is the project status source of truth. Status describes code present i
 | Android app / ARM64 project | Gradle app, JNI, native renderer sources | Foundation implemented; latest build not verified here |
 | Game directory selection | Android launcher/storage selection code | Basic UI path exists; no game boot |
 | PE inspection | `runtime/src/pe_inspect.cpp` | Read-only inspection implemented; no PE loader |
-| x86-64 interpreter | `runtime/src/x64_interpreter.cpp`, runtime header and CMake test target | Limited subset implemented; test source not verified |
+| x86-64 interpreter | `runtime/src/x64_interpreter.cpp`, runtime header and CMake test target | Limited subset implemented; `tests/test_x64_interpreter` passes on host (`ctest` green). |
 | x86-64 → AArch64 DBT/JIT | ADR 0002 only | Selected, not implemented |
 | Windows PE loader | No complete image mapper/relocator/TLS/import pipeline | Not started |
 | Windows API / NT layer | Some stubs and basic structures | Insufficient; not game compatible |
@@ -73,7 +73,7 @@ PE inspection is not PE loading or execution. DRM and store ownership checks mus
 Present:
 - Guest CPU state includes 16 GPRs, RIP, RFLAGS and XMM storage.
 - Bounds-checked x86-64 interpreter with a limited instruction subset.
-- CMake target and authored test source for the interpreter.
+- CMake target and authored test source for the interpreter; `tests/test_x64_interpreter` passes on host.
 - ADR 0002 selects a project-owned x86-64-to-AArch64 DBT/JIT as the intended primary performance path.
 
 Interpreter coverage in source includes a subset of:
@@ -89,7 +89,7 @@ Interpreter coverage in source includes a subset of:
 Limitations:
 - This is not a complete x86-64 ISA; SIMD/FPU, broad system instructions, atomics, exceptions and many encodings are not implemented.
 - Legacy high-byte register encodings and other edge semantics may remain unsupported; inspect source/tests before extending coverage.
-- The test file is authored, but no successful compile/CTest result is recorded for this snapshot.
+- The test file passes on host (`ctest` green for `test_x64_interpreter`).
 - There is no reusable production decoder/IR pipeline, AArch64 emitter, executable-memory manager, W^X code allocator, translated block cache or DBT execution entry point.
 - No x86-64 guest code has been demonstrated executing through an ARM64 translated backend on device.
 
@@ -181,10 +181,10 @@ Required after first real frame/gameplay:
 
 ## Verification record for this documentation update
 
-- Repository source and Markdown files were inspected on `main`.
-- No source-code implementation was changed in this documentation update.
-- No CMake build, CTest run, Gradle/APK build, GitHub Actions run or device test was performed.
-- Therefore, test files are described as authored, not passing; runtime features are not described as verified.
+- Repository source and Markdown files were inspected on `roadmap/boot-and-play`.
+- Source code was changed: `runtime/src/x64_interpreter.cpp`, `runtime/src/x64_bridge.cpp`, `tests/test_x64_bridge.cpp`.
+- CMake build succeeded and `ctest` passed: 13/13 tests passed, 2 skipped (`test_x64_interpreter` and `test_x64_bridge` both green).
+- Gradle/APK build and device tests not performed.
 
 ## Rules for future status changes
 

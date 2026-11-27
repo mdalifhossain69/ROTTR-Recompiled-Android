@@ -60,7 +60,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 
 ## Phase E: Windows calls and runtime
 
-29. 🚧 Build the guest-to-host call bridge using the Windows x64 convention. **In progress:** bridge, HostProc calling convention, guest-to-host address mapping implemented in `runtime/src/x64_bridge.{h,cpp}` and `runtime/src/win32_host.cpp`. Tests pending.
+29. ✅ Build the guest-to-host call bridge using the Windows x64 convention. **Pass:** bridge, HostProc calling convention, guest-to-host address mapping implemented in `runtime/src/x64_bridge.{h,cpp}` and `runtime/src/win32_host.cpp`. `tests/test_x64_bridge` passes host→guest (step 29) and guest→host callback (step 30) on host.
 30. Support host-to-guest callbacks. **Pass:** nested callbacks preserve all nonvolatile registers.
 31. Implement process exit, last-error, module and command-line APIs. **Pass:** your EXE calls `ExitProcess(42)` and the app reports 42.
 32. Implement handles. **Pass:** invalid and closed handles return correct errors.
