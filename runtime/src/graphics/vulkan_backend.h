@@ -26,6 +26,8 @@ public:
     bool copyResource(uint64_t dst, uint64_t src) override;
     // Transitions every mip/layer of a texture and updates its tracked Vulkan layout.
     bool transitionTexture(uint64_t handle, VkImageLayout target);
+    VkShaderModule createShaderModule(const uint32_t* spirvWords, size_t wordCount);
+    void destroyShaderModule(VkShaderModule module);
     bool draw(uint32_t, uint32_t, uint32_t, uint32_t) override;
     bool drawIndexed(uint32_t, uint32_t, int32_t, uint32_t) override;
 
