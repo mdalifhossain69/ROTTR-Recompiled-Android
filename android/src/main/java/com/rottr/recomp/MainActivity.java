@@ -113,8 +113,8 @@ public class MainActivity extends Activity {
         launcher = null;
         NativeBridge.setStagesDone(1);
         setContentView(boot);
-        boot.addLine("Game launch is not available yet: translating and running the game's code, "
-                + "and its Windows and DirectX functions, are not implemented.\n");
+        boot.addLine("CPU execution backend status:\n" + NativeBridge.x64RuntimeStatus());
+        boot.addLine("Game launch remains blocked until a Windows x86-64 execution backend and Windows/DirectX runtime are integrated.\n");
         boot.addLine("Checking ROTTR.exe (read-only)...");
         checkGameExe(boot, gameFolder);
     }
