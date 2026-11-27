@@ -142,7 +142,9 @@ public final class LauncherScreen extends FrameLayout {
     }
 
     private void updateStorageStatus() {
-        storageStatus.setText("▤  STORAGE CHECK");
+        storageStatus.setText(folderPath != null && folderPath.getText().length() > 0
+                && !folderPath.getText().toString().equals("No game folder selected")
+                ? "▤  GAME FOLDER SET" : "▤  STORAGE CHECK");
     }
 
     private void addSpinnerRow(LinearLayout parent, String label, String[] options, String selected, String key) {
@@ -153,7 +155,8 @@ public final class LauncherScreen extends FrameLayout {
         Spinner spinner = new Spinner(activity);
         ArrayAdapter<String> adapter = new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item, options);
         spinner.setAdapter(adapter);
-        int index = java.util.Arrays.asList(options).indexOf(selected);
+        String saved = activity.getSharedPreferences("rottr_launcher", 0).getString(key, selected);
+        int index = java.util.Arrays.asList(options).indexOf(saved);
         spinner.setSelection(Math.max(0, index));
         spinner.setBackgroundColor(Color.TRANSPARENT);
         spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
@@ -173,11 +176,12 @@ public final class LauncherScreen extends FrameLayout {
         row.addView(label, new LinearLayout.LayoutParams(0, dp(38), 1f));
         SeekBar seek = new SeekBar(activity);
         seek.setMax(70);
-        seek.setProgress(50);
+        int savedResolution = activity.getSharedPreferences("rottr_launcher", 0).getInt("resolution", 80);
+        seek.setProgress(Math.max(0, Math.min(70, savedResolution - 50)));
         seek.setProgressTintList(android.content.res.ColorStateList.valueOf(gold));
         seek.setThumbTintList(android.content.res.ColorStateList.valueOf(gold));
         row.addView(seek, new LinearLayout.LayoutParams(dp(112), dp(38)));
-        TextView value = text("80%", 12, Color.WHITE, true);
+        TextView value = text(savedResolution + "%", 12, Color.WHITE, true);
         value.setGravity(Gravity.CENTER);
         row.addView(value, new LinearLayout.LayoutParams(dp(38), dp(38)));
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
