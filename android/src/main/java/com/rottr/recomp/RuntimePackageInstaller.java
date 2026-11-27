@@ -18,6 +18,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * Imports Winlator-compatible WCP component packages into app-private storage.
@@ -137,8 +140,8 @@ public final class RuntimePackageInstaller {
             if (++count > MAX_ENTRIES) throw new IOException("WCP contains too many files");
             String name = safeRelativeName(entry.getName());
             if (name.isEmpty()) continue;
-            if (entry.isSymbolicLink() || entry.isLink() || entry.isSparse()) {
-                throw new IOException("WCP contains an unsupported link or sparse file: " + name);
+            if (entry.isLink() || entry.isSparse()) {
+                throw new IOException("WCP contains an unsupported hard link or sparse file: " + name);
             }
             File output = new File(root, name);
             String rootPath = root.getCanonicalPath() + File.separator;
@@ -148,6 +151,24 @@ public final class RuntimePackageInstaller {
             if (entry.isDirectory()) {
                 if (!output.isDirectory() && !output.mkdirs()) {
                     throw new IOException("Cannot create directory: " + name);
+                }
+                continue;
+            }
+            if (entry.isSymbolicLink()) {
+                Path linkTarget = Paths.get(entry.getLinkName());
+                Path parentPath = Paths.get(name).getParent();
+                Path resolved = (parentPath == null ? linkTarget : parentPath.resolve(linkTarget)).normalize();
+                if (linkTarget.isAbsolute() || resolved.startsWith("..")) {
+                    throw new IOException("WCP symbolic link escapes install directory: " + name);
+                }
+                File parent = output.getParentFile();
+                if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                    throw new IOException("Cannot create symbolic-link parent: " + name);
+                }
+                try {
+                    Files.createSymbolicLink(output.toPath(), linkTarget);
+                } catch (Exception error) {
+                    throw new IOException("Cannot create WCP symbolic link: " + name, error);
                 }
                 continue;
             }
