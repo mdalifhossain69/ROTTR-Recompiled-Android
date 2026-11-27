@@ -34,11 +34,11 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 
 ## Phase C: PE loader
 
-9. Map headers and sections of a PE32+ file. **Pass:** bytes match the file; uninitialized space is zero; truncated files are rejected.
-10. Apply `DIR64` relocations. **Pass:** loading at two bases gives correct pointers at both.
-11. Apply final section protections. **Pass:** writing to `.text` fails.
-12. Resolve imports by name and ordinal, with a trap for each missing one. **Pass:** calling a missing import logs DLL and function name and stops.
-13. Parse exports, including forwarders. **Pass:** name, ordinal and forwarded lookups resolve.
+9. ✅ Map headers and sections of a PE32+ file. **Pass:** bytes match the file; uninitialized space is zero; truncated files are rejected (`tests/test_pe_loader`, host).
+10. ✅ Apply `DIR64` relocations. **Pass:** loading at two bases gives correct pointers at both (`tests/test_pe_loader`, host).
+11. ✅ Apply final section protections. **Pass:** writing to `.text` fails (`tests/test_pe_loader`, host).
+12. ✅ Resolve imports by name and ordinal, with a trap for each missing one. **Pass:** calling a missing import logs DLL and function name and stops (`tests/test_pe_loader`, host).
+13. ✅ Parse exports, including forwarders. **Pass:** name, ordinal and forwarded lookups resolve (`tests/test_pe_loader`, host).
 14. Load guest DLLs with dependencies and reference counts. **Pass:** your EXE calls your DLL; a dependency cycle does not hang.
 15. Create PEB, TEB, stack and the GS base. **Pass:** `gs:[0x30]` returns the TEB and `gs:[0x60]` the PEB.
 16. Set up static TLS and TLS callbacks (build this test with the MSVC target). **Pass:** callback runs before entry; variable has its initial value.
@@ -51,7 +51,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 20. ✅ Add differential testing against real x86-64 hardware on the CI runner. **Pass:** registers, defined flags and memory match (`tests/test_x64_interpreter`, host).
 21. ✅ Handle all prefixes, ModRM forms and high-byte registers. **Pass:** differential tests match.
 22. ✅ Complete integer, stack, call, multiply, divide and bit instructions. **Pass:** differential tests match, including divide faults.
-23. 🚧 Add string instructions with `REP`. **In progress.**
+23. ✅ Add string instructions with `REP`. **Pass:** `MOVS`, `CMPS`, `SCAS`, `LODS`, `STOS` with byte/word/dword/qword sizes and `REP`/`REPE`/`REPNE` prefixes implemented in `runtime/src/x64_interpreter.cpp`; `tests/test_x64_interpreter` verifies rep movsb, rep stosb, lodsb, and repne scasb on host.
 24. Add atomics and fences with x86 memory ordering. **Pass:** multithreaded counter and litmus tests show no forbidden result on the phone.
 25. Add SSE through SSE4.2. **Pass:** results match, including NaN and rounding cases.
 26. Add x87 and MXCSR behavior. **Pass:** precision and rounding tests match.
@@ -61,7 +61,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 ## Phase E: Windows calls and runtime
 
 29. ✅ Build the guest-to-host call bridge using the Windows x64 convention. **Pass:** bridge, HostProc calling convention, guest-to-host address mapping implemented in `runtime/src/x64_bridge.{h,cpp}` and `runtime/src/win32_host.cpp`. `tests/test_x64_bridge` passes host→guest (step 29) and guest→host callback (step 30) on host.
-30. Support host-to-guest callbacks. **Pass:** nested callbacks preserve all nonvolatile registers.
+30. ✅ Support host-to-guest callbacks. **Pass:** nested callbacks preserve all nonvolatile registers; `tests/test_x64_bridge` verifies guest callback 7+8=15 in RAX on host.
 31. Implement process exit, last-error, module and command-line APIs. **Pass:** your EXE calls `ExitProcess(42)` and the app reports 42.
 32. Implement handles. **Pass:** invalid and closed handles return correct errors.
 33. Implement heaps. **Pass:** a million random allocate and free operations show no corruption.
