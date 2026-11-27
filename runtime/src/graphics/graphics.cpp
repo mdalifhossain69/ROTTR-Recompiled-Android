@@ -12,6 +12,12 @@
 #include <mutex>
 #include <thread>
 
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define ROTTR_GFX_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "ROTTR-Graphics", __VA_ARGS__)
+#define ROTTR_GFX_LOGI(...) __android_log_print(ANDROID_LOG_INFO, "ROTTR-Graphics", __VA_ARGS__)
+#endif
+
 // Platform-specific includes for Android
 #if defined(__ANDROID__)
 #include <android/native_window.h>
@@ -412,6 +418,10 @@ extern "C" bool graphics_init(int width, int height, HWND hwnd) {
     (void)hwnd;
 #endif
 
+#if defined(__ANDROID__)
+    ROTTR_GFX_LOGE("Vulkan setup is not implemented: instance/device/swapchain/render pass are TODO; blank output is expected");
+    ROTTR_GFX_LOGI("Native surface received: %dx%d window=%p", width, height, static_cast<void*>(g_state.window));
+#endif
     // TODO: Full Vulkan initialization sequence:
     // 1. Create VkInstance with required extensions (VK_KHR_surface, VK_KHR_android_surface)
     // 2. Create VkSurfaceKHR from ANativeWindow
@@ -481,6 +491,13 @@ extern "C" bool graphics_present(void) {
     // Phase 6: Frame pacing
     frame_pacing();
 
+#if defined(__ANDROID__)
+    static bool presentWarningLogged = false;
+    if (!presentWarningLogged) {
+        ROTTR_GFX_LOGE("graphics_present has no Vulkan acquire/submit/present implementation");
+        presentWarningLogged = true;
+    }
+#endif
     // TODO: Full Vulkan present sequence:
     // 1. vkWaitForFences
     // 2. vkAcquireNextImageKHR

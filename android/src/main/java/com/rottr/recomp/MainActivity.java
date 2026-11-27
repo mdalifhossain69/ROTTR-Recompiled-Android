@@ -1,160 +1,177 @@
 package com.rottr.recomp;
 
-import android.Manifest;
 import android.app.Activity;
-import android.content.pm.PackageManager;
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.net.Uri;
 import android.graphics.SurfaceTexture;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.Settings;
 import android.util.Log;
-import android.view.InputQueue;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.WindowManager;
 
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-
-/**
- * Main activity for ROTTR-Recomp.
- * Demonstrates integration of native subsystems with Android lifecycle.
- */
+/** Main launcher. Keeps the startup-crash guard from main and records every render boundary. */
 public class MainActivity extends Activity implements TextureView.SurfaceTextureListener {
-    private static final String TAG = "ROTTR-Recomp-MainActivity";
-
-    private static final int REQUEST_STORAGE_PERMISSION = 1001;
-    private static final String[] STORAGE_PERMISSIONS = {
-            Manifest.permission.WRITE_EXTERNAL_STORAGE,
-            Manifest.permission.READ_EXTERNAL_STORAGE,
-    };
-
-    private SurfaceTexture mSurfaceTexture;
-    private Surface mSurface;
-    private boolean mSurfaceValid = false;
+    private static final String TAG = "ROTTR-MainActivity";
+    private Surface surface;
+    private boolean storagePromptShown;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // ---- Auto-save logs to SDcard/ROTTR-logs when the app opens ----
+        // Initialize diagnostics before touching the native bridge.
         LogUtils.init(this);
+        LogUtils.i(TAG, "onCreate entered");
+        LogUtils.i(TAG, "Android " + android.os.Build.VERSION.RELEASE
+                + " / SDK " + android.os.Build.VERSION.SDK_INT);
+        LogUtils.i(TAG, "Native library loaded: " + NativeBridge.isNativeAvailable());
 
-        // Request storage permission (needed on Android 6+ to write to /sdcard)
-        requestStoragePermission();
+        try {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
 
-        // Keep screen on for game
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        
-        // Hide system UI for immersive experience
-        getWindow().getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-            | View.SYSTEM_UI_FLAG_FULLSCREEN
-            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-        );
-        
-        // Create a SurfaceView or TextureView for rendering
-        // For simplicity, we'll use a TextureView
-        TextureView textureView = new TextureView(this);
-        textureView.setSurfaceTextureListener(this);
-        setContentView(textureView);
-        
-        Log.i(TAG, "Activity created. Log dir: " +
-                (Environment.getExternalStorageDirectory() != null
-                        ? Environment.getExternalStorageDirectory().getAbsolutePath() + "/ROTTR-logs"
-                        : "unavailable"));
+            TextureView textureView = new TextureView(this);
+            textureView.setSurfaceTextureListener(this);
+            setContentView(textureView);
+            LogUtils.i(TAG, "TextureView installed; waiting for SurfaceTexture");
+        } catch (Throwable error) {
+            LogUtils.exception("MainActivity.onCreate", error);
+            throw new RuntimeException("Launcher initialization failed", error);
+        }
     }
-    
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        LogUtils.i(TAG, "onStart");
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
-        Log.i(TAG, "onResume");
+        LogUtils.i(TAG, "onResume");
+        if (LogUtils.isRootStorageAvailable()) {
+            boolean moved = LogUtils.migrateToRootStorage(this);
+            LogUtils.i(TAG, "Root diagnostics storage ready; migration=" + moved
+                    + ", file=" + LogUtils.getLogFile());
+        } else {
+            LogUtils.i(TAG, "All-files access not granted; root log folder unavailable");
+            showRootStoragePrompt();
+        }
     }
-    
+
+    private void showRootStoragePrompt() {
+        if (storagePromptShown || isFinishing()) return;
+        storagePromptShown = true;
+        new AlertDialog.Builder(this)
+                .setTitle("Enable ROTTR crash logs")
+                .setMessage("To save diagnostics exactly at Internal storage/ROTTR-logs (not Android/data), allow ROTTR-Recomp to access all files. Android will open the system permission screen.")
+                .setPositiveButton("Open settings", (dialog, which) -> {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                        LogUtils.i(TAG, "Opened Android all-files-access settings");
+                    } catch (Throwable error) {
+                        LogUtils.exception("open all-files-access settings", error);
+                    }
+                })
+                .setNegativeButton("Not now", (dialog, which) ->
+                        LogUtils.i(TAG, "User deferred public root log permission"))
+                .show();
+    }
+
     @Override
     protected void onPause() {
+        LogUtils.i(TAG, "onPause");
         super.onPause();
-        Log.i(TAG, "onPause");
     }
-    
+
+    @Override
+    protected void onStop() {
+        LogUtils.i(TAG, "onStop");
+        super.onStop();
+    }
+
     @Override
     protected void onDestroy() {
-        super.onDestroy();
+        LogUtils.i(TAG, "onDestroy");
+        try {
+            NativeBridge.shutdown();
+        } catch (Throwable error) {
+            LogUtils.exception("NativeBridge.shutdown", error);
+        }
+        if (surface != null) {
+            surface.release();
+            surface = null;
+        }
         LogUtils.close();
-        // Shutdown native subsystems
-        NativeBridge.shutdown();
+        super.onDestroy();
     }
-    
+
     @Override
-    public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
-        Log.i(TAG, "onSurfaceTextureAvailable: " + width + "x" + height);
-        mSurfaceTexture = surface;
-        mSurface = new Surface(surface);
-        mSurfaceValid = true;
-        
-        // Initialize native with surface dimensions
-        NativeBridge.init(width, height);
-        
-        // Set the surface for rendering
-        NativeBridge.setSurface(mSurface);
+    public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
+        LogUtils.i(TAG, "Surface available: " + width + "x" + height);
+        try {
+            surface = new Surface(texture);
+            if (!NativeBridge.isNativeAvailable()) {
+                LogUtils.e(TAG, "BLACK SCREEN: librottr_android did not load; native rendering cannot start");
+                return;
+            }
+            LogUtils.i(TAG, "Calling NativeBridge.init");
+            NativeBridge.init(width, height);
+            LogUtils.i(TAG, "Calling NativeBridge.setSurface");
+            NativeBridge.setSurface(surface);
+            LogUtils.i(TAG, "Native surface initialization calls returned");
+        } catch (Throwable error) {
+            LogUtils.exception("surface initialization", error);
+        }
     }
-    
+
     @Override
-    public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
-        Log.i(TAG, "onSurfaceTextureSizeChanged: " + width + "x" + height);
-        // Re-initialize with new dimensions
-        NativeBridge.init(width, height);
+    public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int width, int height) {
+        LogUtils.i(TAG, "Surface size changed: " + width + "x" + height);
+        try {
+            if (NativeBridge.isNativeAvailable()) NativeBridge.init(width, height);
+        } catch (Throwable error) {
+            LogUtils.exception("surface resize", error);
+        }
     }
-    
+
     @Override
-    public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
-        Log.i(TAG, "onSurfaceTextureDestroyed");
-        NativeBridge.releaseSurface();
-        mSurfaceValid = false;
-        mSurface = null;
-        mSurfaceTexture = null;
+    public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
+        LogUtils.i(TAG, "Surface destroyed");
+        try {
+            NativeBridge.releaseSurface();
+        } catch (Throwable error) {
+            LogUtils.exception("surface release", error);
+        }
+        if (surface != null) {
+            surface.release();
+            surface = null;
+        }
         return true;
     }
-    
+
     @Override
-    public void onSurfaceTextureUpdated(SurfaceTexture surface) {
-        // Called when the surface is updated - could trigger a render frame
-    }
-
-    /* ---------------------------------------------------------------- */
-    /* Storage permission                                               */
-    /* ---------------------------------------------------------------- */
-    private void requestStoragePermission() {
-        // These permissions are capped at API 33 in the manifest; asking for them
-        // on Android 14+ can fail immediately and take the activity down.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            LogUtils.i(TAG, "Skipping legacy storage permission request on Android 14+");
-            return;
-        }
-
-        // Already granted
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                == PackageManager.PERMISSION_GRANTED) {
-            LogUtils.i(TAG, "Storage permission already granted");
-            return;
-        }
-
-        ActivityCompat.requestPermissions(this, STORAGE_PERMISSIONS, REQUEST_STORAGE_PERMISSION);
+    public void onSurfaceTextureUpdated(SurfaceTexture texture) {
+        // Avoid per-frame log spam; native frame/render diagnostics are captured via logcat.
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           String[] permissions,
-                                           int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_STORAGE_PERMISSION) {
-            boolean granted = grantResults.length > 0
-                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-            LogUtils.i(TAG, "Storage permission " + (granted ? "granted" : "denied"));
-        }
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        LogUtils.i(TAG, "Window focus changed: " + hasFocus);
     }
 }
