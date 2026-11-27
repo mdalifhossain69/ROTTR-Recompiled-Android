@@ -1,3 +1,13 @@
+# Diagnostics runaway-log fix (2026-11-27)
+
+Fixed a recursive logcat capture bug in `LogUtils`: captured logcat lines were passed through the normal append method, which also emitted each line back to Android Log. The capture process then read its own output and repeated indefinitely. Captured lines now use a file-only writer and are never mirrored back to logcat. Diagnostic files are capped at 8 MiB; capture stops when the limit is reached.
+
+Commit: `fc95021`.
+
+This fixes runaway diagnostic growth; it does not fix the black screen. Vulkan initialization and actual acquire/submit/present remain unimplemented in `graphics.cpp`. A new APK must be built and installed before the logging fix is present on the phone.
+
+---
+
 # Android build configuration update (2026-11-27)
 
 The repository now builds **debug APKs only**. GitHub Actions runs `assembleDebug`, verifies the debug APK signature, and uploads the debug artifact. The workflow does not read release-signing secrets or generate release keystores. The Android Gradle configuration disables the release variant.
