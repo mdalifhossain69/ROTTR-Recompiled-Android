@@ -30,10 +30,6 @@ bool contains(const X64GuestMemory& memory, uint64_t address, size_t length) {
     return offset <= memory.size && length <= memory.size - static_cast<size_t>(offset);
 }
 
-uint8_t read8(const X64GuestMemory& memory, uint64_t address) {
-    return memory.data[static_cast<size_t>(address - memory.base)];
-}
-
 bool fetch(const X64GuestMemory& memory, uint64_t address, void* out, size_t size) {
     if (!memory.executable || !contains(memory, address, size)) return false;
     std::memcpy(out, memory.data + static_cast<size_t>(address - memory.base), size);
