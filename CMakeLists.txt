@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Portable part: guest state, Remill helpers, Win32 stubs and runtime probes.
 add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/guest.c
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/guest_mem.c
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/remill_intrinsics.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_stubs.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_runtime.cpp
@@ -61,6 +62,11 @@ enable_testing()
 add_executable(test_guest tests/test_guest.c)
 target_link_libraries(test_guest PRIVATE rottr_core)
 add_test(NAME guest COMMAND test_guest)
+
+add_executable(test_guest_mem tests/test_guest_mem.c)
+target_link_libraries(test_guest_mem PRIVATE rottr_core)
+target_compile_options(test_guest_mem PRIVATE -Wall -Wextra -Werror)
+add_test(NAME guest_mem COMMAND test_guest_mem)
 
 add_executable(test_pe_inspect tests/test_pe_inspect.cpp runtime/src/pe_inspect.cpp)
 target_include_directories(test_pe_inspect PRIVATE runtime/include)

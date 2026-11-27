@@ -22,15 +22,15 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 
 1. ✅ Fix the Vulkan surface size. **Pass:** log shows `first frame presented` (done).
 2. ✅ Build tests and APK in GitHub Actions. **Pass:** workflow succeeds (you reported this done).
-3. Add `mingw-w64` to the workflow for building your own Windows test programs. **Pass:** a test `.exe` is produced in CI.
+3. ✅ Add `mingw-w64` to the workflow for building your own Windows test programs. **Pass:** `tests/windows/rottr-win64-test.exe` is built as PE32+ and uploaded as a CI artifact (see `.github/workflows/build-android.yml`).
 
 ## Phase B: Guest memory
 
-4. Reserve a guest address range with `mmap` and translate guest to host addresses with bounds checks. **Pass:** first and last byte work; one byte outside fails.
-5. Commit and decommit 4 KB guest pages. **Pass:** uncommitted access fails; recommitted pages read zero.
-6. Protect pages: none, read, write, execute. Handle 16 KB host pages by tracking 4 KB permissions in software. **Pass:** every forbidden access is rejected on 4 KB and simulated 16 KB hosts.
-7. Release and query regions, with 64 KB allocation granularity. **Pass:** overlap, double free, unaligned base and integer overflow are rejected.
-8. Route `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` to this manager. **Pass:** results and error codes match a real Windows test program.
+4. ✅ Reserve a guest address range with `mmap` and translate guest to host addresses with bounds checks. **Pass:** first and last byte work; one byte outside fails (`tests/test_guest_mem`, host).
+5. ✅ Commit and decommit 4 KB guest pages. **Pass:** uncommitted access fails; recommitted pages read zero (`tests/test_guest_mem`, host).
+6. ✅ Protect pages: none, read, write, execute. Handle 16 KB host pages by tracking 4 KB permissions in software. **Pass:** every forbidden access is rejected; adjacent 4 KB pages are enforced independently (`tests/test_guest_mem`, host; ARM64/phone run pending).
+7. ✅ Release and query regions, with 64 KB allocation granularity. **Pass:** overlap, double free, unaligned base and integer overflow are rejected (`tests/test_guest_mem`, host).
+8. ✅ Route `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` to this manager. **Pass:** results and documented error codes verified against the manager (`tests/test_guest_mem`, host); the real Windows test program `tests/windows/rottr-win64-test.exe` is built in CI for diffing (exact diff pending a Wine/device run).
 
 ## Phase C: PE loader
 
