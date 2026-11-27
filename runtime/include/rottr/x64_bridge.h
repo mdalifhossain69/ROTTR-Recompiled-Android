@@ -49,6 +49,31 @@ HostProc resolveHostCallProc(uint64_t guestAddr);
 uint64_t callHostProc(uint64_t guestProcAddr, rottr_cpu& cpu,
                       const X64GuestMemory& memory);
 
+// ---- Host-to-guest callbacks (step 30) ----
+// A guest function that host code can call.
+// Signature follows Windows x64 convention; host calls via the bridge.
+using GuestProc = uint64_t (*)(uint64_t rcx, uint64_t rdx, uint64_t r8,
+                               uint64_t r9);
+
+// Register a guest function address so host code can call it through the bridge.
+// Returns a host-side call handle (opaque cookie).
+uint64_t registerGuestCallback(uint64_t guestAddr);
+
+// Look up a guest function address by host call handle.
+uint64_t resolveGuestCallback(uint64_t handle);
+
+// Call a guest function from host context. Writes return value into guest RAX
+// and restores guest RIP to the return address. Returns false if the guest
+// faults or does not return cleanly.
+bool callGuestProc(uint64_t handle, rottr_cpu& cpu,
+                   const X64GuestMemory& memory,
+                   uint64_t rcx, uint64_t rdx, uint64_t r8, uint64_t r9,
+                   uint64_t& outResult);
+
+// Process exit (step 31).
+bool isExitRequested();
+uint32_t getExitCode();
+
 constexpr int kHostCallStackSlots = 8;
 
 }  // namespace rottr

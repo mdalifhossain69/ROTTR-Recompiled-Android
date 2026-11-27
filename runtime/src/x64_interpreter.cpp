@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 
@@ -299,12 +300,35 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         return true;
     }
 
-    // ---- PUSH: FF /6 (push r/m64) ----
+    // ---- FF /2 (call r/m64) and FF /6 (push r/m64) ----
     if (opcode == 0xff) {
+        std::fprintf(stderr, "DEBUG: ff handler entered at 0x%llx\n", (unsigned long long)cpu.rip);
         uint8_t modrm = 0;
-        if (!decoder.byte(modrm)) return false;
+        if (!decoder.byte(modrm)) { std::fprintf(stderr, "DEBUG: ff: modrm fetch failed\n"); return false; }
+        std::fprintf(stderr, "DEBUG: ff: modrm=0x%02x regField=%u\n", modrm, ((modrm >> 3) & 7));
         const unsigned regField = (modrm >> 3) & 7;
-        if (regField == 6) {
+        if (regField == 2) { // call r/m64
+            RmOperand rm;
+            if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+            uint64_t target = 0;
+            if (!readOperandSized(memory, cpu, rm, opSize, target)) return false;
+            uint64_t returnAddr = decoder.next();
+            if (resolveHostCallProc(target) != nullptr) {
+                cpu.gpr[4] -= 8;
+                if (!writeGuest(memory, cpu.gpr[4], &returnAddr, 8)) return false;
+                uint64_t ret = callHostProc(target, cpu, memory);
+                reg(cpu, 0) = ret;
+                cpu.rip = returnAddr;
+                ripUpdated = true;
+                return true;
+            }
+            cpu.gpr[4] -= 8;
+            if (!writeGuest(memory, cpu.gpr[4], &returnAddr, 8)) return false;
+            cpu.rip = target;
+            ripUpdated = true;
+            return true;
+        }
+        if (regField == 6) { // push r/m64
             RmOperand rm;
             if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
             uint64_t value = 0;
@@ -707,6 +731,9 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         if (!decoder.immediate(rel32)) return false;
         uint64_t returnAddr = decoder.next();
         uint64_t target = returnAddr + static_cast<int64_t>(rel32);
+        std::fprintf(stderr, "DEBUG: call direct target=0x%llx hostProc=%p\n",
+                (unsigned long long)target,
+                (void*)resolveHostCallProc(target));
         if (resolveHostCallProc(target) != nullptr) {
             cpu.gpr[4] -= 8;
             if (!writeGuest(memory, cpu.gpr[4], &returnAddr, 8)) return false;
@@ -721,35 +748,6 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         cpu.rip = target;
         ripUpdated = true;
         return true;
-    }
-
-    // ---- FF /2 (call r/m64) - indirect call through memory ----
-    if (opcode == 0xff) {
-        uint8_t modrm = 0;
-        if (!decoder.byte(modrm)) return false;
-        const unsigned regField = (modrm >> 3) & 7;
-        if (regField == 2) { // call r/m64
-            RmOperand rm;
-            if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
-            uint64_t target = 0;
-            if (!readOperandSized(memory, cpu, rm, opSize, target)) return false;
-            uint64_t returnAddr = decoder.next();
-            if (resolveHostCallProc(target) != nullptr) {
-                cpu.gpr[4] -= 8;
-                if (!writeGuest(memory, cpu.gpr[4], &returnAddr, 8)) return false;
-                uint64_t ret = callHostProc(target, cpu, memory);
-                reg(cpu, 0) = ret;
-                cpu.rip = returnAddr;
-                ripUpdated = true;
-                return true;
-            }
-            cpu.gpr[4] -= 8;
-            if (!writeGuest(memory, cpu.gpr[4], &returnAddr, 8)) return false;
-            cpu.rip = target;
-            ripUpdated = true;
-            return true;
-        }
-        return false;
     }
 
     // ---- C3 (ret near) ----
@@ -813,6 +811,8 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         X64StopReason stopReason = X64StopReason::UnsupportedInstruction;
         bool ok = executeInstruction(cpu, memory, decoder, rex, first, opSizeOverride, ripUpdated, stopReason);
         if (!ok) {
+            std::fprintf(stderr, "DEBUG: executeInstruction failed at 0x%llx opcode=0x%02x stopReason=%d\n",
+                    (unsigned long long)instStart, first, (int)stopReason);
             result.reason = stopReason;
             result.faultAddress = instStart;
             break;

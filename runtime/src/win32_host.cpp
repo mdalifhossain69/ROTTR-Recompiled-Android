@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <atomic>
 
 namespace rottr {
 
@@ -39,9 +40,8 @@ uint64_t allocHandle(uint64_t type) {
     return it == g_handles.end() ? nullptr : &it->second;
 }
 
-// ---- File handles ----
-std::map<uint64_t, FILE*> g_fileHandles;
-std::mutex g_fileMutex;
+// ---- Thread-local last error ----
+thread_local uint32_t g_lastError = 0;
 
 }  // namespace
 
@@ -54,14 +54,12 @@ uint8_t g_heap[64] = {};
 
 extern "C" uint64_t host_GetLastError(uint64_t, uint64_t, uint64_t, uint64_t,
                                       uint64_t, uint64_t, uint64_t, uint64_t) {
-    // Thread-local last error stored in guest memory would be ideal;
-    // for now return 0.
-    return 0;
+    return g_lastError;
 }
 
 extern "C" uint64_t host_SetLastError(uint64_t code, uint64_t, uint64_t, uint64_t,
                                       uint64_t, uint64_t, uint64_t, uint64_t) {
-    (void)code;
+    g_lastError = static_cast<uint32_t>(code);
     return 0;
 }
 
@@ -357,6 +355,21 @@ extern "C" uint64_t host_ReleaseSemaphore(uint64_t sem, uint64_t count,
 
 }  // namespace rottr
 
+// ---- Process exit ----
+std::atomic<bool> g_exitRequested{false};
+uint32_t g_exitCode = 0;
+
+extern "C" uint64_t host_ExitProcess(uint64_t exitCode, uint64_t, uint64_t,
+                                     uint64_t, uint64_t, uint64_t,
+                                     uint64_t, uint64_t) {
+    g_exitCode = static_cast<uint32_t>(exitCode);
+    g_exitRequested = true;
+    return 0;
+}
+
+bool isExitRequested() { return g_exitRequested.load(); }
+uint32_t getExitCode() { return g_exitCode; }
+
 // =====================================================================
 // Register host modules with their exports
 // =====================================================================
@@ -369,6 +382,7 @@ void registerHostModules() {
     k32.exportsByName = {
         {"GetLastError", reinterpret_cast<uint64_t>(&host_GetLastError)},
         {"SetLastError", reinterpret_cast<uint64_t>(&host_SetLastError)},
+        {"ExitProcess", reinterpret_cast<uint64_t>(&host_ExitProcess)},
         {"GetTickCount", reinterpret_cast<uint64_t>(&host_GetTickCount)},
         {"GetTickCount64", reinterpret_cast<uint64_t>(&host_GetTickCount64)},
         {"QueryPerformanceCounter", reinterpret_cast<uint64_t>(&host_QueryPerformanceCounter)},
