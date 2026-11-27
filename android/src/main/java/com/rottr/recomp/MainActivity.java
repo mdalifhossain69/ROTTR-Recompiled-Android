@@ -111,8 +111,7 @@ public class MainActivity extends Activity implements android.view.TextureView.S
             boolean moved = LogUtils.migrateToRootStorage(this);
             LogUtils.i(TAG, "Root diagnostics storage ready; migration=" + moved + ", file=" + LogUtils.getLogFile());
         } else {
-            LogUtils.i(TAG, "All-files access not granted; root log folder unavailable");
-            showRootStoragePrompt();
+            LogUtils.i(TAG, "All-files access not granted; using app-private diagnostics storage");
         }
     }
 
