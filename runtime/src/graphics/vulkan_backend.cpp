@@ -42,6 +42,8 @@ VulkanBackend::~VulkanBackend() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (device_ == VK_NULL_HANDLE) return;
     vkDeviceWaitIdle(device_);
+    if (drawCommand_ != VK_NULL_HANDLE) vkFreeCommandBuffers(device_, pool_, 1, &drawCommand_);
+    drawCommand_ = VK_NULL_HANDLE; renderPassActive_ = false;
     for (VkPipeline pipeline : pipelines_)
         if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline, nullptr);
     pipelines_.clear();
@@ -434,9 +436,68 @@ void VulkanBackend::destroyGraphicsPipeline(VkPipeline pipeline) {
     pipelines_.erase(it);
 }
 
-// Draw needs a translated shader pair, input layout, render pass and pipeline state.
-// Fail closed until that pipeline state is supplied; never report a fake successful draw.
-bool VulkanBackend::draw(uint32_t, uint32_t, uint32_t, uint32_t) { return false; }
-bool VulkanBackend::drawIndexed(uint32_t, uint32_t, int32_t, uint32_t) { return false; }
+bool VulkanBackend::beginRenderPass(VkRenderPass renderPass, VkFramebuffer framebuffer,
+                                    uint32_t width, uint32_t height, const VkClearValue* clear) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!valid() || renderPassActive_ || renderPass == VK_NULL_HANDLE || framebuffer == VK_NULL_HANDLE ||
+        width == 0 || height == 0 || boundPipeline_ == VK_NULL_HANDLE) return false;
+    if (!beginCommands(drawCommand_)) return false;
+    VkClearValue defaultClear{}; defaultClear.color = {{0.f, 0.f, 0.f, 1.f}};
+    VkRenderPassBeginInfo begin{}; begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    begin.renderPass = renderPass; begin.framebuffer = framebuffer; begin.renderArea.extent = {width, height};
+    begin.clearValueCount = 1; begin.pClearValues = clear ? clear : &defaultClear;
+    vkCmdBeginRenderPass(drawCommand_, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(drawCommand_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline_);
+    VkViewport viewport{0.f, 0.f, static_cast<float>(width), static_cast<float>(height), 0.f, 1.f};
+    VkRect2D scissor{{0, 0}, {width, height}};
+    vkCmdSetViewport(drawCommand_, 0, 1, &viewport); vkCmdSetScissor(drawCommand_, 0, 1, &scissor);
+    renderPassActive_ = true; vertexBufferBound_ = false; indexBufferBound_ = false; return true;
+}
+
+bool VulkanBackend::endRenderPass() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!renderPassActive_ || drawCommand_ == VK_NULL_HANDLE) return false;
+    vkCmdEndRenderPass(drawCommand_);
+    const VkCommandBuffer command = drawCommand_; drawCommand_ = VK_NULL_HANDLE;
+    renderPassActive_ = false; vertexBufferBound_ = false; indexBufferBound_ = false;
+    return endCommands(command);
+}
+
+bool VulkanBackend::bindGraphicsPipeline(uint64_t pipeline) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const VkPipeline candidate = static_cast<VkPipeline>(pipeline);
+    if (candidate == VK_NULL_HANDLE || std::find(pipelines_.begin(), pipelines_.end(), candidate) == pipelines_.end()) return false;
+    boundPipeline_ = candidate;
+    if (renderPassActive_) vkCmdBindPipeline(drawCommand_, VK_PIPELINE_BIND_POINT_GRAPHICS, candidate);
+    return true;
+}
+
+bool VulkanBackend::bindVertexBuffer(uint32_t slot, uint64_t handle, uint32_t, uint32_t offset) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = allocations_.find(handle);
+    if (!renderPassActive_ || it == allocations_.end() || it->second.kind != ResourceKind::Buffer || offset >= it->second.size) return false;
+    const VkBuffer buffer = it->second.buffer; const VkDeviceSize vkOffset = offset;
+    vkCmdBindVertexBuffers(drawCommand_, slot, 1, &buffer, &vkOffset); vertexBufferBound_ = true; return true;
+}
+
+bool VulkanBackend::bindIndexBuffer(uint64_t handle, IndexFormat format, uint32_t offset) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = allocations_.find(handle);
+    if (!renderPassActive_ || it == allocations_.end() || it->second.kind != ResourceKind::Buffer || offset >= it->second.size) return false;
+    vkCmdBindIndexBuffer(drawCommand_, it->second.buffer, offset, format == IndexFormat::UInt16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+    indexBufferBound_ = true; return true;
+}
+
+bool VulkanBackend::draw(uint32_t count, uint32_t start, uint32_t instances, uint32_t firstInstance) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!renderPassActive_ || boundPipeline_ == VK_NULL_HANDLE || !vertexBufferBound_ || count == 0 || instances == 0) return false;
+    vkCmdDraw(drawCommand_, count, instances, start, firstInstance); return true;
+}
+
+bool VulkanBackend::drawIndexed(uint32_t count, uint32_t start, int32_t base, uint32_t instances) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!renderPassActive_ || boundPipeline_ == VK_NULL_HANDLE || !vertexBufferBound_ || !indexBufferBound_ || count == 0 || instances == 0) return false;
+    vkCmdDrawIndexed(drawCommand_, count, instances, start, base, 0); return true;
+}
 
 } // namespace rottr::gfx::d3d11
