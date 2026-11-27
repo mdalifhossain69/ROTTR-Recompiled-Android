@@ -94,7 +94,6 @@ private:
     bool validate(const Texture2DDesc&, const SubresourceData*) const;
     std::shared_ptr<Backend> backend_;
     mutable std::mutex mutex_;
-    uint64_t nextId_ = 1;
     std::vector<ResourcePtr> resources_;
 };
 
