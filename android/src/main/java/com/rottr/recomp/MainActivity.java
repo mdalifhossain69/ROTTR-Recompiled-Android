@@ -17,6 +17,8 @@ import android.widget.Toast;
 public class MainActivity extends Activity {
     private static final String TAG = "ROTTR-MainActivity";
     private static final int REQUEST_GAME_FOLDER = 4101;
+    private static final int REQUEST_PROTON_PACKAGE = 4201;
+    private static final int REQUEST_FEXCORE_PACKAGE = 4202;
     private static final String PREFS = "rottr_launcher";
     private Uri gameFolder;
     private LauncherScreen launcher;
@@ -80,6 +82,10 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if ((requestCode == REQUEST_PROTON_PACKAGE || requestCode == REQUEST_FEXCORE_PACKAGE) && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            installRuntimePackage(data.getData(), requestCode == REQUEST_PROTON_PACKAGE ? RuntimePackageInstaller.TYPE_PROTON : RuntimePackageInstaller.TYPE_FEXCORE);
+            return;
+        }
         if (requestCode != REQUEST_GAME_FOLDER || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri selected = data.getData();
         try {
@@ -114,6 +120,7 @@ public class MainActivity extends Activity {
         NativeBridge.setStagesDone(1);
         setContentView(boot);
         boot.addLine("CPU execution backend status:\n" + NativeBridge.x64RuntimeStatus());
+        boot.addLine(RuntimePackageInstaller.status(this) + "\n");
         boot.addLine("Game launch remains blocked until a Windows x86-64 execution backend and Windows/DirectX runtime are integrated.\n");
         boot.addLine("Checking ROTTR.exe (read-only)...");
         checkGameExe(boot, gameFolder);
@@ -159,8 +166,9 @@ public class MainActivity extends Activity {
 
     private void showAppSettings() {
         new AlertDialog.Builder(this).setTitle("ROTTR launcher")
-                .setMessage("Graphics options are saved on this device; the native renderer does not use them yet.\n\n" + logStatus())
+                .setMessage("Graphics options are saved on this device; the native renderer does not use them yet.\n\n" + logStatus() + "\n\n" + RuntimePackageInstaller.status(this))
                 .setPositiveButton("OK", null)
+                .setNegativeButton("Install runtime", (dialog, which) -> showRuntimeInstaller())
                 .setNeutralButton("Log access", (dialog, which) -> openLogAccessSettings())
                 .show();
     }
