@@ -1,0 +1,55 @@
+#pragma once
+
+#include "graphics/d3d11_device.h"
+#include <vulkan/vulkan.h>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+
+namespace rottr::gfx::d3d11 {
+
+// Owns D3D11 resource allocations on an already-created Vulkan device.
+// The caller must keep VkDevice/VkPhysicalDevice alive until this object is destroyed.
+class VulkanBackend final : public Backend {
+public:
+    VulkanBackend(VkPhysicalDevice physical, VkDevice device, VkQueue queue, uint32_t queueFamily);
+    ~VulkanBackend() override;
+    VulkanBackend(const VulkanBackend&) = delete;
+    VulkanBackend& operator=(const VulkanBackend&) = delete;
+
+    bool valid() const;
+    bool createBuffer(const BufferDesc&, const void*, uint64_t& handle) override;
+    bool createTexture2D(const Texture2DDesc&, const SubresourceData*, uint64_t& handle) override;
+    void destroyResource(uint64_t handle) override;
+    bool uploadBuffer(uint64_t handle, uint32_t offset, const void*, uint32_t size) override;
+    bool copyResource(uint64_t dst, uint64_t src) override;
+    bool draw(uint32_t, uint32_t, uint32_t, uint32_t) override;
+    bool drawIndexed(uint32_t, uint32_t, int32_t, uint32_t) override;
+
+private:
+    struct Allocation {
+        ResourceKind kind = ResourceKind::Buffer;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkImage image = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceSize size = 0;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+        uint32_t width = 0, height = 0, mipLevels = 1, arraySize = 1;
+    };
+    uint32_t memoryType(uint32_t bits, VkMemoryPropertyFlags required) const;
+    bool beginCommands(VkCommandBuffer& command);
+    bool endCommands(VkCommandBuffer command);
+    void destroyAllocation(Allocation& allocation);
+
+    VkPhysicalDevice physical_ = VK_NULL_HANDLE;
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkQueue queue_ = VK_NULL_HANDLE;
+    VkCommandPool pool_ = VK_NULL_HANDLE;
+    mutable std::mutex mutex_;
+    uint64_t nextHandle_ = 1;
+    std::unordered_map<uint64_t, Allocation> allocations_;
+};
+
+} // namespace rottr::gfx::d3d11
