@@ -11,6 +11,9 @@
 #include <android/native_window_jni.h>
 #include <android/log.h>
 #include <cstdint>
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 #define LOG_TAG "ROTTR-Recomp-JNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -21,6 +24,7 @@ extern "C" bool graphics_init(int width, int height, void* window);
 extern "C" void graphics_shutdown(void);
 extern "C" void graphics_set_target_fps(unsigned int fps);
 extern "C" void graphics_set_frame_pacing(bool enable);
+extern "C" bool graphics_present(void);
 
 extern "C" bool audio_init(unsigned int sampleRate, int channels, int format);
 extern "C" void audio_shutdown(void);
@@ -49,6 +53,9 @@ static struct {
     ANativeWindow* window = nullptr;
     int32_t screenWidth = 0;
     int32_t screenHeight = 0;
+    std::atomic<bool> framePumpRunning{false};
+    std::thread framePump;
+    std::atomic<uint64_t> presentedFrames{0};
 } g_state;
 
 static void initialize_core(int width, int height) {
@@ -72,7 +79,50 @@ static void initialize_core(int width, int height) {
     g_state.coreInitialized = true;
 }
 
+static void stop_frame_pump(void) {
+    g_state.framePumpRunning.store(false, std::memory_order_release);
+    if (g_state.framePump.joinable()) {
+        g_state.framePump.join();
+    }
+}
+
+static void start_frame_pump(void) {
+    if (g_state.framePumpRunning.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    g_state.presentedFrames.store(0, std::memory_order_relaxed);
+    g_state.framePump = std::thread([]() {
+        using clock = std::chrono::steady_clock;
+        auto nextFrame = clock::now();
+        auto lastReport = nextFrame;
+        uint64_t lastReportedFrames = 0;
+        LOGI("JNI: native frame-pump thread started");
+        while (g_state.framePumpRunning.load(std::memory_order_acquire)) {
+            nextFrame += std::chrono::milliseconds(16);
+            const bool presented = graphics_present();
+            if (presented) {
+                g_state.presentedFrames.fetch_add(1, std::memory_order_relaxed);
+            }
+            const auto now = clock::now();
+            if (now - lastReport >= std::chrono::seconds(5)) {
+                const uint64_t total = g_state.presentedFrames.load(std::memory_order_relaxed);
+                LOGI("JNI: frame-pump heartbeat; present_calls=%llu, interval_calls=%llu",
+                     static_cast<unsigned long long>(total),
+                     static_cast<unsigned long long>(total - lastReportedFrames));
+                lastReportedFrames = total;
+                lastReport = now;
+            }
+            if (nextFrame < now - std::chrono::milliseconds(100)) {
+                nextFrame = now;
+            }
+            std::this_thread::sleep_until(nextFrame);
+        }
+        LOGI("JNI: native frame-pump thread stopped");
+    });
+}
+
 static void shutdown_window(void) {
+    stop_frame_pump();
     if (!g_state.windowInitialized) {
         return;
     }
@@ -107,12 +157,14 @@ static void initialize_window(int width, int height, ANativeWindow* window) {
     video_set_native_window(window);
     const bool graphicsOk = graphics_init(width, height, window);
     LOGI("JNI: graphics_init returned %s", graphicsOk ? "true" : "false");
-    LOGE("JNI: Activity bridge has no frame-pump thread; android_main is not entered by the regular Activity");
     if (!graphicsOk) {
         LOGE("JNI: graphics_init failed; rendering cannot start");
     }
 
     g_state.windowInitialized = true; // Track attempted initialization so partial failures are cleaned up.
+    if (graphicsOk) {
+        start_frame_pump();
+    }
 }
 
 static void release_window(void) {
