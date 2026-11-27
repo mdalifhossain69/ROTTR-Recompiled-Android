@@ -498,13 +498,6 @@ extern "C" bool graphics_present(void) {
         presentWarningLogged = true;
     }
 #endif
-#if defined(__ANDROID__)
-    static bool presentWarningLogged = false;
-    if (!presentWarningLogged) {
-        ROTTR_GFX_LOGE("graphics_present has no Vulkan acquire/submit/present implementation");
-        presentWarningLogged = true;
-    }
-#endif
     // TODO: Full Vulkan present sequence:
     // 1. vkWaitForFences
     // 2. vkAcquireNextImageKHR
