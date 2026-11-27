@@ -33,6 +33,12 @@ public:
     // synchronously; the returned pipeline is owned by this backend.
     VkPipeline createGraphicsPipeline(const VkGraphicsPipelineCreateInfo& createInfo);
     void destroyGraphicsPipeline(VkPipeline pipeline);
+    bool beginRenderPass(VkRenderPass renderPass, VkFramebuffer framebuffer,
+                         uint32_t width, uint32_t height, const VkClearValue* clear = nullptr);
+    bool endRenderPass();
+    bool bindGraphicsPipeline(uint64_t pipeline) override;
+    bool bindVertexBuffer(uint32_t slot, uint64_t handle, uint32_t stride, uint32_t offset) override;
+    bool bindIndexBuffer(uint64_t handle, IndexFormat format, uint32_t offset) override;
     bool draw(uint32_t, uint32_t, uint32_t, uint32_t) override;
     bool drawIndexed(uint32_t, uint32_t, int32_t, uint32_t) override;
 
@@ -62,6 +68,11 @@ private:
     VkCommandPool pool_ = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     std::vector<VkPipeline> pipelines_;
+    VkCommandBuffer drawCommand_ = VK_NULL_HANDLE;
+    VkPipeline boundPipeline_ = VK_NULL_HANDLE;
+    bool renderPassActive_ = false;
+    bool vertexBufferBound_ = false;
+    bool indexBufferBound_ = false;
     mutable std::mutex mutex_;
     uint64_t nextHandle_ = 1;
     std::unordered_map<uint64_t, Allocation> allocations_;
