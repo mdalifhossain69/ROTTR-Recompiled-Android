@@ -1,6 +1,6 @@
 # Android debug builds
 
-This repository intentionally builds and distributes **debug APKs only**. There is no release signing configuration, no release keystore requirement, and no release APK workflow.
+The Android module is configured for development/debug APK builds. This document does not claim that the current source has been built successfully.
 
 ## Build locally
 
@@ -10,24 +10,22 @@ From the `android/` directory:
 ./gradlew assembleDebug -PVERSION_CODE=1
 ```
 
-The APK is written to:
+The APK is normally written to:
 
 ```
 android/build/outputs/apk/debug/
 ```
 
-## GitHub Actions
+Use a compatible Android SDK, NDK and JDK as required by the Gradle project.
 
-Run **Build ROTTR Android Debug APK** from the Actions tab. The workflow builds `assembleDebug`, verifies the APK signature, and uploads a `rottr-recomp-debug-apk` artifact. No repository secrets are required.
+## GitHub Actions policy
 
-GitHub-hosted runners are temporary, so the workflow caches its generated Android debug keystore under a fixed cache key. Successive manually dispatched builds can normally reuse the same debug signing certificate while that cache remains available. Pull-request builds may use a temporary key and should not be treated as update-compatible distribution builds.
+The repository workflow is intended for **manual dispatch only** from the Actions tab. Push and pull-request triggers are not wanted and must not be added. Do not start a workflow automatically when editing documentation or pushing commits.
 
-## Updating an existing installation
+If a manual workflow is run, inspect its actual run result and artifact before reporting a successful build. This document does not assert that an APK was built during the latest documentation update.
 
-Android permits an in-place update only when the signing certificate matches and the new APK has a compatible version code.
+## APK update compatibility
 
-The CI debug signing cache preserves the key for successive manual builds. GitHub Actions caches are not permanent storage; if the cache is deleted or evicted, the next CI build may receive a different debug certificate and Android may require a one-time uninstall/reinstall. Back up the CI debug keystore if guaranteed long-term update compatibility is required.
+Android allows an in-place update only when the signing certificate matches and the version code is compatible. A local Android debug keystore and a CI-generated debug keystore are different signing identities unless deliberately configured to match. Do not promise update compatibility without verifying the certificate used for both APKs.
 
-The Android SDK's local debug keystore is separate from the GitHub Actions CI debug keystore. Local builds update installations signed with that same local key, not necessarily APKs downloaded from CI.
-
-Debug APKs are intended for development and testing, not public production distribution.
+Debug APKs are for development and testing, not production distribution.
