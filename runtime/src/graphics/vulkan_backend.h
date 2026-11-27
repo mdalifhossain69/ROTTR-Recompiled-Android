@@ -33,6 +33,7 @@ public:
     // synchronously; the returned pipeline is owned by this backend.
     VkPipeline createGraphicsPipeline(const VkGraphicsPipelineCreateInfo& createInfo);
     void destroyGraphicsPipeline(VkPipeline pipeline);
+    static uint64_t pipelineId(VkPipeline pipeline);
     bool beginRenderPass(VkRenderPass renderPass, VkFramebuffer framebuffer,
                          uint32_t width, uint32_t height, const VkClearValue* clear = nullptr);
     bool endRenderPass();
