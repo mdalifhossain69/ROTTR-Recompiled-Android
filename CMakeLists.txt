@@ -52,6 +52,18 @@ target_link_libraries(test_runtime PRIVATE rottr_core)
 target_compile_options(test_runtime PRIVATE -Wall -Wextra -Werror)
 add_test(NAME runtime COMMAND test_runtime)
 
+# The Vulkan renderer also runs on a desktop headless surface (e.g. Mesa lavapipe).
+find_package(Vulkan)
+if(Vulkan_FOUND)
+  add_executable(test_vulkan tests/test_vulkan.cpp runtime/src/vk/vulkan_renderer.cpp)
+  target_include_directories(test_vulkan PRIVATE runtime/include)
+  target_link_libraries(test_vulkan PRIVATE Vulkan::Vulkan)
+  target_compile_features(test_vulkan PRIVATE cxx_std_17)
+  target_compile_options(test_vulkan PRIVATE -Wall -Wextra -Werror -Wno-missing-field-initializers)
+  add_test(NAME vulkan COMMAND test_vulkan)
+  set_tests_properties(vulkan PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
   foreach(name recon functions harness lifted)
