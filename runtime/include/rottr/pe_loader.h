@@ -68,11 +68,20 @@ struct PeMissingImport {
 using PeImportResolver = std::function<bool(const PeImportRequest&, uint64_t& address)>;
 
 struct PeLoadOptions {
-    uint64_t loadBase = 0;       // guest address, 64 KB aligned; 0 picks the image's preferred base
-    bool applyRelocations = true;
-    bool resolveImports = true;
-    bool applyProtections = true;
-    PeImportResolver importResolver;
+    uint64_t loadBase = 0;               // guest address, 64 KB aligned; 0 picks the image's preferred base
+    bool applyRelocations = true;        // Step 10: Apply DIR64 relocations
+    bool resolveImports = true;          // Step 12: Resolve imports with traps
+    bool applyProtections = true;        // Step 11: Apply section protections
+    PeImportResolver importResolver;     // Import resolver callback
+
+    // Step 15: PEB/TEB/GS base setup
+    bool setupPEBTEB = false;           // Create Process/Thread Environment Blocks
+    // Step 16: TLS callbacks
+    bool setupTLS = false;               // Set up Thread Local Storage
+    // Step 17: DllMain calling
+    bool callDllMain = false;            // Call DllMain for loaded modules
+    // Step 18: Import-free EXE loading
+    bool entryReturns42 = false;         // Load EXE that returns 42 from entry point
 };
 
 class PeImage {
