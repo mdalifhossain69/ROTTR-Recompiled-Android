@@ -1,156 +1,195 @@
-# Project roadmap and milestone status
+# Project roadmap and implementation status
 
-**Last reconciled:** 2026-11-27  
-**Overall status:** foundational development; no verified ROTTR gameplay on Android.
+**Reconciled:** 2026-11-27  
+**Overall status:** foundational native Android work; no verified ROTTR gameplay.
 
-This is the single source of truth for project milestones. A component being present in the repository does not mean the full game uses it.
+This file is the project status source of truth. Status describes code present in the repository, not plans, authored-but-unrun tests, or assumptions.
 
-## Target
+## Status labels
 
-Deliver a native Android ARM64 application for Rise of the Tomb Raider with:
-- Native Android launcher, storage access, lifecycle and settings.
-- A real, supported way to execute or recompile the game's x86-64 code for ARM64.
-- Windows API/runtime compatibility required by the game and middleware.
-- Direct3D 11-to-Vulkan translation, including resources, shaders, state and draw submission.
-- Android Vulkan swapchain presentation of actual game frames.
-- Working audio, controller/touch input, configurable touch overlay and performance HUD.
-- Repeatable builds, tests and on-device validation.
+- **IMPLEMENTED** — source code exists for the stated limited scope.
+- **PARTIAL** — some primitives exist; required coverage or integration is missing.
+- **IMPLEMENTED — NOT TEST VERIFIED** — code/test source exists, but no successful test evidence is recorded.
+- **SELECTED — NOT IMPLEMENTED** — architecture chosen; no implementation yet.
+- **NOT STARTED** — required code is absent.
+- **NOT VERIFIED** — no current reproducible build/device evidence.
 
-The user-facing app must remain a native Android experience. A Windows desktop/container/emulator interface is not the product target.
+## Current milestone summary
 
-## Status legend
-
-- **Done** — implemented and verified for the stated scope.
-- **Partial** — useful code exists, but integration, coverage or runtime validation remains.
-- **Blocked / not started** — required implementation is absent or a dependency has not been provisioned.
-- **Not verified** — cannot claim success without a test or device evidence.
-
-## Milestones
-
-### M0 — Repository and Android application foundation
-**Status: Partial / foundation present**
-- [x] Android Gradle application and native ARM64 build configuration exist.
-- [x] Launcher screen and Android Storage Access Framework folder selection exist.
-- [x] Diagnostic logging and native bridge foundations exist.
-- [ ] Verify lifecycle, surface recreation and stability on target Android devices.
-- [ ] Verify installation/update signing behavior for the intended distribution workflow.
-
-### M1 — Game installation identification and validation
-**Status: Partial**
-- [x] Read-only PE32+ executable inspection exists.
-- [x] Executable architecture and metadata can be inspected.
-- [ ] Validate the selected game directory and required data files, not just one EXE.
-- [ ] Implement a safe game-data mount interface for the runtime.
-- [ ] Preserve Steam/EOS ownership and DRM checks.
-
-PE parsing/inspection is not loading or executing the game.
-
-### M2 — CPU execution/recompilation and Windows runtime
-**Status: In progress — DBT selected, implementation not yet present**
-- [x] An x86-64 backend capability/status interface exists.
-- [x] Select project-owned x86-64-to-AArch64 DBT/JIT as the primary CPU strategy; see [ADR 0002](adr/0002-aarch64-dbt-primary.md).
-- [ ] Implement the AArch64 translator, executable code cache and safe W^X memory lifecycle.
-- [ ] Execute a controlled x86-64 test program on-device through the selected runtime.
-- [ ] Implement PE loading, relocations, imports, TLS, exceptions, memory model and required process/thread behavior.
-- [ ] Implement the Windows API and middleware surface actually used by ROTTR.
-- [ ] Load the game and reach a deterministic boot milestone without bypassing ownership checks.
-- [ ] Add crash reporting, process lifecycle and diagnostics.
-
-**Exit criteria:** reproducible on-device evidence proves real game code is executing and reaches a documented initialization milestone. A “backend not linked” status or PE identification does not pass.
-
-### M3 — D3D11 compatibility layer and Vulkan resources
-**Status: Partial**
-- [x] DXGI-to-Vulkan mapping for a subset of common formats, including selected compressed and depth/stencil formats.
-- [x] Block-aware BC row-pitch/image-size calculations and overflow checks.
-- [x] D3D11-like device/resource/immediate-context abstractions with validation and host fake-backend tests.
-- [x] Vulkan primitives for buffers, images, staging uploads, resource copies and per-subresource layout tracking.
-- [ ] Complete D3D11 object model, COM-compatible lifetime/refcount behavior and required interfaces.
-- [ ] Complete texture formats, views, mapping rules and synchronization semantics required by the game.
-- [ ] Implement descriptor/resource/sampler binding and constant-buffer updates.
-- [ ] Implement input assembler, rasterizer, blend, depth/stencil and render-target state.
-- [ ] Implement command lists, hazards, barriers and robust queue synchronization.
-- [ ] Implement multisample resource handling and resolve.
-- [ ] Validate against captures/traces from the actual game.
-
-### M4 — Shader translation and Vulkan pipelines
-**Status: Partial; compiler dependency is a blocker**
-- [x] Bounds-checked DXBC container and shader-token inspection.
-- [x] Optional vkd3d-shader compiler adapter.
-- [x] SPIR-V output validation and Vulkan shader-module creation.
-- [x] Vulkan graphics-pipeline creation primitive.
-- [ ] Provision a compatible ARM64 vkd3d-shader compiler in the reproducible Android build.
-- [ ] Translate and validate the actual ROTTR shader corpus and required features.
-- [ ] Map D3D11 shader resources, constant buffers, samplers and stage interfaces to Vulkan descriptors.
-- [ ] Create game-compatible pipeline layouts and state.
-- [ ] Add shader/pipeline cache and failure diagnostics.
-- [ ] Validate visual correctness in representative scenes.
-
-The repository does not currently vendor or build vkd3d-shader for Android ARM64. Without it, DXBC compilation reports CompilerUnavailable.
-
-### M5 — Connect real game draws to Android presentation
-**Status: Partial backend primitives; runtime integration not done**
-- [x] Vulkan backend can begin/end a caller-provided render pass.
-- [x] Backend can bind owned graphics pipelines and vertex/index buffers.
-- [x] Backend records vkCmdDraw and vkCmdDrawIndexed and submits its command buffer.
-- [ ] Connect the Android renderer's swapchain render pass/framebuffers or compatible rendering interface.
-- [ ] Establish one coherent Vulkan device/queue/resource ownership model.
-- [ ] Connect the game's D3D11 command stream to the immediate context and Vulkan backend.
-- [ ] Produce actual ROTTR draw calls and present them to the swapchain.
-- [ ] Verify frames with captures, counters and on-device visual checks.
-- [ ] Keep diagnostic placeholder rendering out of the gameplay path.
-
-**Exit criteria:** a real ROTTR scene is visible on Android and captures prove game geometry, textures and shaders were submitted by the game path. A synthetic vkCmdDraw test is not sufficient.
-
-### M6 — Audio, input, touch controls and in-game UI
-**Status: Partial / integration not verified**
-- [ ] Complete required game audio API compatibility and connect game audio to Android output.
-- [ ] Connect physical controllers and Android input to the game's input model.
-- [ ] Render an in-game touch overlay with configurable button/stick positions, sizes, opacity and visibility.
-- [ ] Add an in-game performance HUD with FPS/frame time and useful CPU/GPU/memory diagnostics.
-- [ ] Persist layouts/settings and support reset/recovery.
-- [ ] Validate multi-touch, orientation, focus changes and input latency on-device.
-
-Source files for input, touch and audio exist, but that does not prove they are connected to a running ROTTR process or drawn in-game.
-
-### M7 — Performance, compatibility and release
-**Status: Not started for real gameplay**
-- [ ] Establish a stable baseline on target ARM64 devices.
-- [ ] Profile CPU translation, Vulkan submissions, shader compilation, memory and thermal behavior.
-- [ ] Optimize after correctness and repeatable measurements.
-- [ ] Test saves, loading, cutscenes, audio, controls, suspend/resume and long sessions.
-- [ ] Define supported device/driver requirements and known limitations.
-- [ ] Produce reproducible signed builds and update-compatible release artifacts.
-- [ ] Publish a compatibility matrix backed by device test logs.
-
-Do not promise a specific FPS before real gameplay measurements exist.
-
-## Current implementation inventory
-
-| Component | What exists | What it does not prove |
+| Workstream | Evidence in repository | Honest status |
 |---|---|---|
-| Launcher | Android UI and folder picker | Game boot |
-| PE inspector | Reads executable metadata | CPU execution or DRM-free status |
-| Vulkan renderer | Android presentation foundation | ROTTR rendering |
-| x64 runtime interface | Reports backend capability | An x64 execution engine is linked |
-| D3D11 device/context | Resource/context abstractions and tests | Full D3D11 ABI or game API |
-| Vulkan backend | Resource, pipeline and command primitives | Game runtime is wired to it |
-| DXBC | Parser and optional compiler adapter | ARM64 shader compiler is packaged |
-| Draw calls | Real Vulkan command recording primitives | Game draw stream is generated |
+| Android app / ARM64 project | Gradle app, JNI, native renderer sources | Foundation implemented; latest build not verified here |
+| Game directory selection | Android launcher/storage selection code | Basic UI path exists; no game boot |
+| PE inspection | `runtime/src/pe_inspect.cpp` | Read-only inspection implemented; no PE loader |
+| x86-64 interpreter | `runtime/src/x64_interpreter.cpp`, runtime header and CMake test target | Limited subset implemented; test source not verified |
+| x86-64 → AArch64 DBT/JIT | ADR 0002 only | Selected, not implemented |
+| Windows PE loader | No complete image mapper/relocator/TLS/import pipeline | Not started |
+| Windows API / NT layer | Some stubs and basic structures | Insufficient; not game compatible |
+| Guest DLL loading | No complete guest module/dependency loader | Not started |
+| DXGI/Vulkan formats | Mapping and size helpers | Partial subset implemented |
+| D3D11 device/context | Resource/context abstractions and tests | Partial; not full COM ABI |
+| Vulkan resource backend | Buffers, images, uploads, copies, layout tracking | Partial primitives |
+| DXBC | Container/token parser and optional compiler adapter | Parser present; ARM64 compiler not provisioned |
+| Vulkan shader/pipeline/draw primitives | Backend functions exist | Implemented as primitives; not game integrated |
+| Actual game draw stream | No guest runtime integration | Not started |
+| First actual ROTTR frame | No evidence | Not achieved |
+| Audio/input/touch/HUD integration | Supporting source modules exist | Partial/unverified; not connected to running game |
+| Performance/release validation | No gameplay baseline | Not started |
 
-## Immediate implementation order
+## M0 — Android application foundation
 
-1. **CPU/runtime proof:** [ADR 0002](adr/0002-aarch64-dbt-primary.md) selects AArch64 DBT/JIT as the primary execution path. The current bounded interpreter is retained as a reference oracle and temporary fallback, not the long-term performance engine. The translator, code cache and executable-memory manager are not implemented yet. [ADR 0001](adr/0001-x64-execution-android-arm64.md) records the earlier evaluation. A bounded interpreter slice and host test target now exist; coverage includes register and memory MOV/arithmetic, immediate group-1 ADD/OR/AND/SUB/XOR/CMP, stack/CALL/RET, and short/near conditional branches. Tests are authored but this slice has not been build- or host-test-verified, and it is not production ISA coverage. The interpreter now also includes a bounded 64-bit SHL/SAL, SHR and SAR group (immediate, implicit-one and CL-count forms), with count masking and zero-count flag preservation. Shift tests are authored but not build-verified. The interpreter now has MOVZX (byte/word), MOVSX (byte/word), and MOVSXD (dword) with register or memory sources and 32-bit destination zero-extension semantics. Existing MOV r32,imm32 also zero-extends. Extension tests are authored but not build-verified. General 8/16/32-bit register and memory MOV, ADD, SUB, OR, AND, XOR, CMP, and TEST forms are now implemented for the covered ModRM encodings. Byte and word writes preserve unaffected register bits; dword writes zero-extend; byte memory operations touch only the selected byte. Legacy AH/CH/DH/BH byte-register forms remain explicitly unsupported. Tests are authored but not build-verified. Next stop prioritizing broad interpreter ISA expansion; extract a reusable decoder/IR boundary, implement a minimal AArch64 emitter and code cache, then differential-test on host and Android ARM64.
-2. **Game loader and imports:** implement the loader and Windows APIs/middleware ROTTR requires, preserving ownership checks.
-3. **Graphics compiler and state:** provision ARM64 DXBC compilation; complete shader/resource/state translation.
-4. **Renderer integration:** connect the D3D11 context and Vulkan backend to Android's swapchain and the actual game command stream.
-5. **First real frame:** boot to a known scene and verify actual game draw submissions.
-6. **Input/audio/UI:** connect controls, audio, touch overlay and performance HUD to the live game.
-7. **Optimization/release:** measure, fix correctness and stability, then optimize.
+**Status: PARTIAL**
 
-## Rules for updating this roadmap
+Present:
+- Android Gradle application and ARM64 native build configuration.
+- Launcher and storage-folder selection foundations.
+- JNI/native window and Vulkan renderer sources.
+- Diagnostic Vulkan presentation path.
 
-- Update this file whenever a milestone materially changes.
-- Link completed items to code/tests or a verified CI/device run where possible.
-- Keep “implemented”, “integrated”, “host-tested” and “device-verified” distinct.
-- Never mark a milestone complete because only a skeleton, interface, mock backend or build target exists.
-- Never describe a diagnostic renderer, synthetic draw test or APK installation as playable gameplay.
+Not established:
+- A current successful build from this exact revision.
+- Full lifecycle/surface-recreation stability across target devices.
+- Game startup.
+
+## M1 — Game installation inspection
+
+**Status: PARTIAL**
+
+Present:
+- Read-only PE32+ executable inspection and metadata reporting.
+- Local game input guidance; proprietary game files are not committed.
+
+Missing:
+- Complete selected-folder validation and game-data inventory.
+- Safe runtime game-data mount.
+- PE image mapping, relocations, imports, TLS and guest process initialization.
+
+PE inspection is not PE loading or execution. DRM and store ownership checks must remain intact.
+
+## M2 — CPU execution and Windows runtime
+
+**Status: PARTIAL interpreter; DBT SELECTED, NOT IMPLEMENTED**
+
+Present:
+- Guest CPU state includes 16 GPRs, RIP, RFLAGS and XMM storage.
+- Bounds-checked x86-64 interpreter with a limited instruction subset.
+- CMake target and authored test source for the interpreter.
+- ADR 0002 selects a project-owned x86-64-to-AArch64 DBT/JIT as the intended primary performance path.
+
+Interpreter coverage in source includes a subset of:
+- NOP/HLT/RET and stack PUSH/POP.
+- Relative CALL/JMP and short/near conditional branches.
+- MOV immediate and supported register/memory MOV forms.
+- Integer ADD/SUB/OR/AND/XOR/CMP/TEST forms and group-1 immediates.
+- SHL/SAL/SHR/SAR forms.
+- MOVZX/MOVSX/MOVSXD forms.
+- ModRM/SIB, displacement and RIP-relative addressing for covered operands.
+- Bounds checks and explicit stop reasons for unsupported operations.
+
+Limitations:
+- This is not a complete x86-64 ISA; SIMD/FPU, broad system instructions, atomics, exceptions and many encodings are not implemented.
+- Legacy high-byte register encodings and other edge semantics may remain unsupported; inspect source/tests before extending coverage.
+- The test file is authored, but no successful compile/CTest result is recorded for this snapshot.
+- There is no reusable production decoder/IR pipeline, AArch64 emitter, executable-memory manager, W^X code allocator, translated block cache or DBT execution entry point.
+- No x86-64 guest code has been demonstrated executing through an ARM64 translated backend on device.
+
+Next:
+1. Extract a length-safe decoder/IR boundary shared by the reference interpreter and translator.
+2. Implement a minimal AArch64 emitter and correct guest-state/host-ABI handling.
+3. Add safe executable-memory lifecycle, instruction-cache maintenance and W^X policy.
+4. Add block cache, code invalidation and safe interpreter fallback.
+5. Differential-test translated blocks against the interpreter, then run the same corpus on Android ARM64.
+
+**Do not call this NCE:** the guest ISA differs from the host ISA. The intended mechanism is DBT/JIT translation to native ARM64 instructions.
+
+## M3 — PE loader and Windows compatibility
+
+**Status: NOT STARTED as a complete game runtime**
+
+Required:
+- PE32+ section mapping, relocations, TLS and entry-point setup.
+- Guest virtual memory and process/thread lifecycle.
+- Import/export resolution and guest DLL loading.
+- Windows API/NT compatibility for the actual imported and dynamically resolved calls.
+- Correct synchronization, exceptions/unwinding, file mapping and I/O behavior.
+- Real dependency inventory and initialization traces.
+
+Existing PE inspection and Win32 stub files do not satisfy these requirements. No game DLL loading or Windows runtime compatibility is claimed.
+
+## M4 — D3D11-to-Vulkan graphics
+
+**Status: PARTIAL**
+
+Present:
+- DXGI format mapping and BC size/pitch helpers for a subset of formats.
+- D3D11-style device/resource/immediate-context abstractions.
+- Buffer/texture operations, selected context state and draw validation/tracing.
+- Vulkan buffer/image/view/staging upload/copy/layout tracking primitives.
+- Vulkan shader-module, graphics-pipeline, draw-command recording and submission primitives.
+
+Missing:
+- Full COM-compatible D3D11 interfaces and lifetime semantics.
+- Complete views, descriptors, samplers, constant-buffer/resource binding and pipeline state.
+- Full synchronization, hazards, barriers, command lists and MSAA behavior.
+- One coherent device/queue/resource ownership integration with Android renderer.
+- Game D3D11 call stream feeding these components.
+
+The code is a partial compatibility foundation, not a complete D3D11 implementation.
+
+## M5 — Shader compilation and real game rendering
+
+**Status: PARTIAL primitives; actual game path NOT STARTED**
+
+Present:
+- DXBC container/token inspection.
+- Optional vkd3d-shader adapter.
+- Vulkan shader module and graphics pipeline creation primitives.
+
+Missing:
+- Reproducible vkd3d-shader provisioning/build for Android ARM64.
+- Translation and validation of the actual ROTTR shader corpus.
+- D3D11 shader reflection/resource mapping and descriptor layout.
+- Connection from game D3D11 calls through Vulkan backend to Android swapchain.
+- Actual ROTTR draw packets, geometry, textures, shaders and visible game frame.
+
+A diagnostic clear/stage renderer or synthetic Vulkan draw is not a ROTTR frame.
+
+## M6 — Audio, input, touch UI and HUD
+
+**Status: PARTIAL source foundations; game integration NOT VERIFIED**
+
+Input, touch-control, audio and performance source modules exist. Their presence does not prove connection to a running guest game.
+
+Still required:
+- Connect game input APIs to Android controller/touch input.
+- In-game configurable touch overlay (position, size, opacity and visibility).
+- Performance HUD with measured FPS/frame time and CPU/GPU/memory data.
+- Required game audio API compatibility and Android output.
+- Persist settings/layout and validate multitouch, orientation and lifecycle.
+
+## M7 — Performance, compatibility and release
+
+**Status: NOT STARTED for gameplay**
+
+No real game performance baseline or playable scene is available. Do not promise FPS.
+
+Required after first real frame/gameplay:
+- Profile translation, CPU, GPU, shader compile, memory and thermal behavior.
+- Optimize using measured traces.
+- Test saves, loading, cutscenes, audio, controls, suspend/resume and long sessions.
+- Establish device compatibility and reproducible signed/update-compatible release builds.
+
+## Verification record for this documentation update
+
+- Repository source and Markdown files were inspected on `main`.
+- No source-code implementation was changed in this documentation update.
+- No CMake build, CTest run, Gradle/APK build, GitHub Actions run or device test was performed.
+- Therefore, test files are described as authored, not passing; runtime features are not described as verified.
+
+## Rules for future status changes
+
+- Distinguish source present, integrated, host-tested, Android-built and device-verified.
+- Link the exact implementation/test evidence where possible.
+- Do not mark a milestone complete because a stub, interface, test source or optional adapter exists.
+- Update this file when code or actual test/device evidence changes.
+- Keep active development on `main`; GitHub Actions remain manual-only.
