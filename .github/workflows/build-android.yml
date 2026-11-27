@@ -11,6 +11,11 @@ env:
   ANDROID_SDK_ROOT: /opt/android-sdk
   ANDROID_NDK_HOME: /opt/android-sdk/ndk/27.0.12077973
   GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs='-Xmx2048m'
+  # Signing config (generated in workflow)
+  KEYSTORE_PATH: ${{ github.workspace }}/android/release.keystore
+  KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+  KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+  KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
 jobs:
   build:
@@ -51,6 +56,20 @@ jobs:
             "ndk;27.0.12077973" \
             "platform-tools"
 
+      - name: Generate signing keystore
+        if: env.KEYSTORE_PASSWORD != ''
+        run: |
+          keytool -genkeypair \
+            -alias ${{ env.KEY_ALIAS }} \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -keystore ${{ env.KEYSTORE_PATH }} \
+            -storepass ${{ env.KEYSTORE_PASSWORD }} \
+            -keypass ${{ env.KEY_PASSWORD }} \
+            -dname "CN=ROTTR-Recomp, OU=Android, O=ROTTR-Recomp, L=Unknown, ST=Unknown, C=US" \
+            -noprompt
+
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -66,7 +85,11 @@ jobs:
         run: |
           export ANDROID_SDK_ROOT=/opt/android-sdk
           export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.0.12077973
-          ./gradlew assemble${{ matrix.variant }}
+          ./gradlew assemble${{ matrix.variant }} \
+            -PKEYSTORE_PATH=${{ env.KEYSTORE_PATH }} \
+            -PKEYSTORE_PASSWORD=${{ env.KEYSTORE_PASSWORD }} \
+            -PKEY_ALIAS=${{ env.KEY_ALIAS }} \
+            -PKEY_PASSWORD=${{ env.KEY_PASSWORD }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
