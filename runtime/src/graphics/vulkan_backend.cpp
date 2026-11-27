@@ -11,7 +11,7 @@ namespace rottr::gfx::d3d11 {
 VulkanBackend::VulkanBackend(VkPhysicalDevice physical, VkDevice device, VkQueue queue, uint32_t family)
     : physical_(physical), device_(device), queue_(queue) {
     if (device_ == VK_NULL_HANDLE || queue_ == VK_NULL_HANDLE) return;
-    VkCommandPoolCreateInfo info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    VkCommandPoolCreateInfo info{}; info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     info.queueFamilyIndex = family;
     vkCreateCommandPool(device_, &info, nullptr, &pool_);
@@ -36,10 +36,10 @@ uint32_t VulkanBackend::memoryType(uint32_t bits, VkMemoryPropertyFlags required
     return UINT32_MAX;
 }
 bool VulkanBackend::beginCommands(VkCommandBuffer& command) {
-    VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    VkCommandBufferAllocateInfo alloc{}; alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc.commandPool = pool_; alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; alloc.commandBufferCount = 1;
     if (vkAllocateCommandBuffers(device_, &alloc, &command) != VK_SUCCESS) return false;
-    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    VkCommandBufferBeginInfo begin{}; begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS) {
         vkFreeCommandBuffers(device_, pool_, 1, &command); command = VK_NULL_HANDLE; return false;
@@ -48,7 +48,7 @@ bool VulkanBackend::beginCommands(VkCommandBuffer& command) {
 }
 bool VulkanBackend::endCommands(VkCommandBuffer command) {
     if (vkEndCommandBuffer(command) != VK_SUCCESS) { vkFreeCommandBuffers(device_, pool_, 1, &command); return false; }
-    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    VkSubmitInfo submit{}; submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1; submit.pCommandBuffers = &command;
     const VkResult submitted = vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
     const VkResult waited = submitted == VK_SUCCESS ? vkQueueWaitIdle(queue_) : submitted;
@@ -71,13 +71,13 @@ bool VulkanBackend::createBuffer(const BufferDesc& desc, const void* initial, ui
     if (desc.bindFlags & BindIndexBuffer) usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     if (desc.bindFlags & BindConstantBuffer) usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     if (desc.bindFlags & BindShaderResource) usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    VkBufferCreateInfo info{}; info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     info.size = desc.byteWidth; info.usage = usage; info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if (vkCreateBuffer(device_, &info, nullptr, &a.buffer) != VK_SUCCESS) return false;
     VkMemoryRequirements req{}; vkGetBufferMemoryRequirements(device_, a.buffer, &req);
     const uint32_t type = memoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (type == UINT32_MAX) { destroyAllocation(a); return false; }
-    VkMemoryAllocateInfo mem{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO}; mem.allocationSize = req.size; mem.memoryTypeIndex = type;
+    VkMemoryAllocateInfo mem{}; mem.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO; mem.allocationSize = req.size; mem.memoryTypeIndex = type;
     if (vkAllocateMemory(device_, &mem, nullptr, &a.memory) != VK_SUCCESS ||
         vkBindBufferMemory(device_, a.buffer, a.memory, 0) != VK_SUCCESS) { destroyAllocation(a); return false; }
     if (initial) {
@@ -93,13 +93,13 @@ bool VulkanBackend::createTexture2D(const Texture2DDesc& desc, const Subresource
     const FormatInfo* format = findFormat(desc.format); if (!format) return false;
     Allocation a; a.kind = ResourceKind::Texture2D; a.width = desc.width; a.height = desc.height;
     a.mipLevels = desc.mipLevels; a.arraySize = desc.arraySize; a.format = static_cast<VkFormat>(format->vkFormat);
-    a.aspect = format->depthStencil ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_COLOR_BIT;
+    a.aspect = format->depthStencil ? (desc.format == DxgiFormat::D24UnormS8Uint ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_DEPTH_BIT) : VK_IMAGE_ASPECT_COLOR_BIT;
     VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     if (desc.bindFlags & BindShaderResource) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
     if (desc.bindFlags & BindRenderTarget) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     if (desc.bindFlags & BindDepthStencil) usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     if (desc.bindFlags & BindUnorderedAccess) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-    VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    VkImageCreateInfo image{}; image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image.imageType = VK_IMAGE_TYPE_2D; image.format = a.format;
     image.extent = {desc.width, desc.height, 1}; image.mipLevels = desc.mipLevels; image.arrayLayers = desc.arraySize;
     image.samples = static_cast<VkSampleCountFlagBits>(desc.sampleCount);
@@ -109,10 +109,10 @@ bool VulkanBackend::createTexture2D(const Texture2DDesc& desc, const Subresource
     VkMemoryRequirements req{}; vkGetImageMemoryRequirements(device_, a.image, &req);
     const uint32_t type = memoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (type == UINT32_MAX) { destroyAllocation(a); return false; }
-    VkMemoryAllocateInfo mem{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO}; mem.allocationSize = req.size; mem.memoryTypeIndex = type;
+    VkMemoryAllocateInfo mem{}; mem.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO; mem.allocationSize = req.size; mem.memoryTypeIndex = type;
     if (vkAllocateMemory(device_, &mem, nullptr, &a.memory) != VK_SUCCESS ||
         vkBindImageMemory(device_, a.image, a.memory, 0) != VK_SUCCESS) { destroyAllocation(a); return false; }
-    VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    VkImageViewCreateInfo view{}; view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view.image = a.image; view.viewType = desc.arraySize > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     view.format = a.format; view.subresourceRange = {a.aspect, 0, desc.mipLevels, 0, desc.arraySize};
     if (vkCreateImageView(device_, &view, nullptr, &a.view) != VK_SUCCESS) { destroyAllocation(a); return false; }
@@ -132,8 +132,8 @@ bool VulkanBackend::uploadBuffer(uint64_t handle, uint32_t offset, const void* d
     if (it == allocations_.end() || it->second.kind != ResourceKind::Buffer || !data ||
         offset > it->second.size || size > it->second.size - offset) return false;
     void* mapped = nullptr;
-    if (vkMapMemory(device_, it->second.memory, offset, size, 0, &mapped) != VK_SUCCESS) return false;
-    std::memcpy(mapped, data, size); vkUnmapMemory(device_, it->second.memory); return true;
+    if (vkMapMemory(device_, it->second.memory, 0, it->second.size, 0, &mapped) != VK_SUCCESS) return false;
+    std::memcpy(static_cast<uint8_t*>(mapped) + offset, data, size); vkUnmapMemory(device_, it->second.memory); return true;
 }
 bool VulkanBackend::copyResource(uint64_t dst, uint64_t src) {
     std::lock_guard<std::mutex> lock(mutex_);
