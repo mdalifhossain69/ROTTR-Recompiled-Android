@@ -12,7 +12,7 @@ import android.view.Surface;
 public class NativeBridge {
     private static final String TAG = "ROTTR-Recomp-NativeBridge";
 
-    private static final boolean sNativeAvailable;
+    private static final boolean sNativeAvailable;\n\n    public static boolean isNativeAvailable() {\n        return sNativeAvailable;\n    }
 
     static {
         boolean loaded;
