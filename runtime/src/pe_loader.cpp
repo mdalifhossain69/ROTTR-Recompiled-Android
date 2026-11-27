@@ -702,6 +702,9 @@ bool PeModuleRegistry::resolveImport(const PeImportRequest& request,
         std::string error;
         loadModule(request.module, &error);
         module = findModuleEntry(request.module);
+    } else {
+        // Module already loaded: count this new dependent.
+        ++module->refs;
     }
     if (module == nullptr || module->image == nullptr || module->failed) return false;
     const std::string key = normalize(request.module);
