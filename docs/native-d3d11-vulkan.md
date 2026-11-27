@@ -32,3 +32,12 @@ A Direct3D-to-Vulkan layer does not translate x64 CPU instructions. CPU recompil
 - On-device validation against ROTTR rendering captures.
 
 Do not describe the current milestone as a working game renderer or playable port. The existing Android Vulkan surface renderer is a clear-only diagnostic renderer; it does not yet draw ROTTR assets.
+
+## D3D11 device/context milestone
+
+Added `runtime/src/graphics/d3d11_device.*`:
+- `Device` validates buffer and Texture2D descriptions, creates resource handles through a backend contract, tracks resource lifetime, supports buffer updates/copies, and implements CPU map/unmap for eligible buffers.
+- `ImmediateContext` stores vertex/index/constant-buffer, shader-resource, render-target and topology bindings; validates draw and indexed-draw prerequisites/ranges; forwards draw/copy/update operations to the backend; and exposes a command trace for tests/diagnostics.
+- A fake backend test exercises resource creation, invalid descriptors, map/unmap, bounds checks, bindings, draw calls, copy/update, and lifetime cleanup.
+
+**Backend status:** this milestone defines the backend contract; it does not yet contain a concrete Vulkan implementation. The current Vulkan surface renderer is separate and clear-only. Device/context commands therefore cannot yet create Vulkan buffers/images or issue game draw calls. Next, implement a concrete Vulkan backend using the renderer's VkDevice/queue/command pool, add image memory/views and descriptors, then connect shader/pipeline state and DXBC translation.
