@@ -14,6 +14,8 @@ add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_stubs.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_runtime.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_interpreter.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_bridge.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_host.cpp
 )
 target_include_directories(rottr_core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
 target_compile_options(rottr_core PRIVATE -Wall -Wextra -Werror)

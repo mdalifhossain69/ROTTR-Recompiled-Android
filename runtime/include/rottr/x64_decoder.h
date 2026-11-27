@@ -6,17 +6,11 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+
+#include "rottr/x64_runtime.h"
 
 namespace rottr {
-
-// Guest memory interface for decoder
-struct X64GuestMemory {
-    const uint8_t* data = nullptr;
-    size_t size = 0;
-    uint64_t base = 0;
-    bool executable = false;
-    bool writable = false;
-};
 
 constexpr size_t kMaximumInstructionLength = 15;
 
@@ -54,13 +48,10 @@ public:
     
     template <typename T>
     bool immediate(T& value) {
-        if (cursor_ - start_ > kMaximumInstructionLength || 
-            sizeof(T) > kMaximumInstructionLength - (cursor_ - start_) ||
-            !fetch(memory_, cursor_, &value, sizeof(T))) return false;
+        if (!fetch(memory_, cursor_, &value, sizeof(T))) return false;
         cursor_ += sizeof(T);
         return true;
-    }
-    
+    }    
     uint64_t next() const { return cursor_; }
     uint64_t length() const { return cursor_ - start_; }
     
@@ -68,7 +59,9 @@ private:
     bool fetch(const X64GuestMemory& memory, uint64_t address, void* out, size_t size) {
         if (memory.data == nullptr || address < memory.base) return false;
         const uint64_t offset = address - memory.base;
-        return offset <= memory.size && length <= memory.size - static_cast<size_t>(offset);
+        if (offset + size > memory.size) return false;
+        std::memcpy(out, memory.data + offset, size);
+        return true;
     }
     
     // Copy implementation (would use std::memcpy in real code)

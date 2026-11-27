@@ -47,11 +47,11 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 
 ## Phase D: CPU interpreter
 
-19. Separate the instruction decoder from execution (a maintained decoder library such as Zydis is an option). **Pass:** existing tests pass; random bytes never read out of bounds.
-20. Add differential testing against real x86-64 hardware on the CI runner. **Pass:** registers, defined flags and memory match.
-21. Handle all prefixes, ModRM forms and high-byte registers. **Pass:** differential tests match.
-22. Complete integer, stack, call, multiply, divide and bit instructions. **Pass:** differential tests match, including divide faults.
-23. Add string instructions with `REP`. **Pass:** forward, backward and faulting copies match.
+19. ✅ Separate the instruction decoder from execution (a maintained decoder library such as Zydis is an option). **Pass:** existing tests pass; random bytes never read out of bounds (`runtime/include/rottr/x64_decoder.h`, `runtime/src/x64_interpreter.cpp`).
+20. ✅ Add differential testing against real x86-64 hardware on the CI runner. **Pass:** registers, defined flags and memory match (`tests/test_x64_interpreter`, host).
+21. ✅ Handle all prefixes, ModRM forms and high-byte registers. **Pass:** differential tests match.
+22. ✅ Complete integer, stack, call, multiply, divide and bit instructions. **Pass:** differential tests match, including divide faults.
+23. 🚧 Add string instructions with `REP`. **In progress.**
 24. Add atomics and fences with x86 memory ordering. **Pass:** multithreaded counter and litmus tests show no forbidden result on the phone.
 25. Add SSE through SSE4.2. **Pass:** results match, including NaN and rounding cases.
 26. Add x87 and MXCSR behavior. **Pass:** precision and rounding tests match.
@@ -60,7 +60,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 
 ## Phase E: Windows calls and runtime
 
-29. Build the guest-to-host call bridge using the Windows x64 convention. **Pass:** 0, 4 and 10 argument calls, floats and returns are correct.
+29. 🚧 Build the guest-to-host call bridge using the Windows x64 convention. **In progress:** bridge, HostProc calling convention, guest-to-host address mapping implemented in `runtime/src/x64_bridge.{h,cpp}` and `runtime/src/win32_host.cpp`. Tests pending.
 30. Support host-to-guest callbacks. **Pass:** nested callbacks preserve all nonvolatile registers.
 31. Implement process exit, last-error, module and command-line APIs. **Pass:** your EXE calls `ExitProcess(42)` and the app reports 42.
 32. Implement handles. **Pass:** invalid and closed handles return correct errors.
