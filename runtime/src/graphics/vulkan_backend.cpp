@@ -89,8 +89,13 @@ bool VulkanBackend::createBuffer(const BufferDesc& desc, const void* initial, ui
 }
 bool VulkanBackend::createTexture2D(const Texture2DDesc& desc, const SubresourceData* initial, uint64_t& handle) {
     std::lock_guard<std::mutex> lock(mutex_);
-    handle = 0; if (!valid() || desc.width == 0 || desc.height == 0) return false;
+    handle = 0; if (!valid() || desc.width == 0 || desc.height == 0 ||
+        desc.mipLevels == 0 || desc.arraySize == 0 || desc.sampleCount == 0) return false;
     const FormatInfo* format = findFormat(desc.format); if (!format) return false;
+    uint32_t maxDimension = std::max(desc.width, desc.height);
+    uint32_t maxMipLevels = 1;
+    while (maxDimension > 1) { maxDimension >>= 1U; ++maxMipLevels; }
+    if (desc.mipLevels > maxMipLevels || (initial && (desc.sampleCount != 1 || format->depthStencil))) return false;
     Allocation a; a.kind = ResourceKind::Texture2D; a.width = desc.width; a.height = desc.height;
     a.mipLevels = desc.mipLevels; a.arraySize = desc.arraySize; a.format = static_cast<VkFormat>(format->vkFormat);
     a.aspect = format->depthStencil ? (desc.format == DxgiFormat::D24UnormS8Uint ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_DEPTH_BIT) : VK_IMAGE_ASPECT_COLOR_BIT;
