@@ -76,11 +76,29 @@ rottr_guest_mem *rottr_guest_reserve(size_t size)
     if (mem == NULL) {
         return NULL;
     }
-    mem->base = mmap(NULL, size, PROT_NONE,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (mem->base == MAP_FAILED) {
-        free(mem);
-        return NULL;
+    /* Windows addresses are 64 KB aligned. mmap only guarantees host page
+     * alignment (4 KB here, 16 KB on some Android devices), so reserve an
+     * extra granularity and keep the aligned middle of the mapping. */
+    {
+        const size_t raw_size = size + ROTTR_ALLOC_GRANULARITY;
+        void *raw = mmap(NULL, raw_size, PROT_NONE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        uintptr_t aligned;
+        if (raw == MAP_FAILED) {
+            free(mem);
+            return NULL;
+        }
+        aligned = ((uintptr_t)raw + ROTTR_ALLOC_GRANULARITY - 1) &
+                  ~(uintptr_t)(ROTTR_ALLOC_GRANULARITY - 1);
+        if (aligned > (uintptr_t)raw)
+            munmap(raw, (size_t)(aligned - (uintptr_t)raw));
+        {
+            const uintptr_t tail = aligned + size;
+            const uintptr_t raw_end = (uintptr_t)raw + raw_size;
+            if (raw_end > tail)
+                munmap((void *)tail, (size_t)(raw_end - tail));
+        }
+        mem->base = (void *)aligned;
     }
     mem->state = calloc(page_count, sizeof(*mem->state));
     mem->prot = calloc(page_count, sizeof(*mem->prot));
@@ -156,10 +174,14 @@ void *rottr_guest_reserve_region(rottr_guest_mem *mem, void *addr, size_t size)
     }
 
     if (addr != NULL) {
-        if (((uintptr_t)addr & (ROTTR_ALLOC_GRANULARITY - 1)) != 0) {
-            return NULL; /* unaligned base */
+        if (((uintptr_t)addr & (ROTTR_ALLOC_GRANULARITY - 1)) != 0 ||
+            (uintptr_t)addr < (uintptr_t)mem->base) {
+            return NULL; /* unaligned base or before the reservation */
         }
-        region_base = (uintptr_t)addr;
+        /* region_base is an offset inside the reservation, not a host address. */
+        region_base = (uintptr_t)addr - (uintptr_t)mem->base;
+    } else if (mem->region_count == 0) {
+        region_base = 0;
     } else {
         uintptr_t last_end = (uintptr_t)mem->regions[mem->region_count - 1]
                                  .BaseAddress -
