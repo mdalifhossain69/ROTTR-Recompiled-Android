@@ -228,6 +228,57 @@ int main() {
         return 1;
     }
 
+
+    // MOVZX/MOVSX and MOVSXD cover byte, word and dword source widths.
+    constexpr uint8_t extensionProgram[] = {
+        0x48,0xbb,0xd0,0x10,0,0,0,0,0,0,
+        0x48,0x0f,0xb6,0x03,             // movzx rax, byte [rbx]
+        0x48,0x0f,0xbe,0x0b,             // movsx rcx, byte [rbx]
+        0x48,0x0f,0xb7,0x53,0x02,         // movzx rdx, word [rbx+2]
+        0x48,0x63,0x73,0x04,              // movsxd rsi, dword [rbx+4]
+        0xf4
+    };
+    memory.fill(0);
+    memory[0xd0] = 0x80;
+    memory[0xd2] = 0xff;
+    memory[0xd3] = 0x80;
+    memory[0xd4] = 0x01;
+    memory[0xd5] = 0x00;
+    memory[0xd6] = 0x00;
+    memory[0xd7] = 0x80;
+    for (size_t i = 0; i < sizeof(extensionProgram); ++i)
+        memory[i] = extensionProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 32);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "MOVZX/MOVSX/MOVSXD must reach HLT") ||
+        !expect(cpu.gpr[0] == 0x80, "MOVZX byte must zero extend") ||
+        !expect(cpu.gpr[1] == ~uint64_t{0} - 127,
+                "MOVSX byte must sign extend -128") ||
+        !expect(cpu.gpr[2] == 0x80ff, "MOVZX word must zero extend") ||
+        !expect(cpu.gpr[6] == 0xffffffff80000001ULL,
+                "MOVSXD must sign extend a dword")) {
+        return 1;
+    }
+
+    // A 32-bit MOV destination zero-extends into its full 64-bit register.
+    constexpr uint8_t zeroExtend32Program[] = {
+        0xb8,0x78,0x56,0x34,0x12,
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(zeroExtend32Program); ++i)
+        memory[i] = zeroExtend32Program[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    cpu.gpr[0] = 0xffffffffffffffffULL;
+    result = rottr::runX64Interpreter(cpu, guest, 8);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "32-bit MOV must reach HLT") ||
+        !expect(cpu.gpr[0] == 0x12345678,
+                "writing a 32-bit register must zero the upper 32 bits")) {
+        return 1;
+    }
+
     std::puts("OK");
     return 0;
 }
