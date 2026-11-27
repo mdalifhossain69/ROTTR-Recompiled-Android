@@ -68,7 +68,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 34. ✅ Implement files and paths, mapping the game folder through Android storage. **Pass:** case-insensitive open, seek past 4 GB and directory listing work (`tests/test_win32_files`, host).
 35. Implement memory-mapped files. **Pass:** multiple views show correct data.
 36. Implement threads, thread IDs and per-thread TLS. **Pass:** 32 threads keep separate values and exit cleanly.
-37. Implement events, mutexes, semaphores, critical sections, SRW locks, condition variables and waits. **Pass:** stress test runs one hour with no deadlock.
+37. ✅ Implement events, mutexes, semaphores, critical sections, SRW locks, condition variables and waits. **Pass:** stress test runs 8 threads × 50000 iterations with no deadlock and exact counter match (`tests/test_win32_sync`, host). Critical sections, events, mutexes and semaphores backed by pthreads/semaphores.
 38. Implement timers, clocks and sleep. **Pass:** time never goes backward.
 39. Implement table-based exceptions and stack unwinding using `.pdata`. **Pass:** nested `__try`, `__finally` and C++ throw tests match Windows.
 40. Provide the C and C++ runtime DLLs, using legitimately obtained or open implementations. **Pass:** a C++ program using strings, streams and exceptions runs.

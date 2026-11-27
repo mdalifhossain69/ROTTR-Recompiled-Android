@@ -11,6 +11,8 @@
 #include <dirent.h>
 #include <map>
 #include <mutex>
+#include <pthread.h>
+#include <semaphore.h>
 #include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -54,6 +56,33 @@ uint64_t allocFileHandle(const char* path, const char* mode) {
     auto it = g_handles.find(h);
     return it == g_handles.end() ? nullptr : &it->second;
 }
+
+// ---- Critical sections ----
+std::map<uint64_t, pthread_mutex_t*> g_criticalSections;
+std::mutex g_criticalSectionsMutex;
+
+// ---- Events ----
+struct EventEntry {
+    bool manualReset = false;
+    bool signaled = false;
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+};
+
+std::map<uint64_t, EventEntry> g_events;
+std::mutex g_eventsMutex;
+
+// ---- Mutexes ----
+std::map<uint64_t, pthread_mutex_t*> g_mutexes;
+std::mutex g_mutexesMutex;
+
+// ---- Semaphores ----
+struct SemEntry {
+    sem_t sem;
+};
+
+std::map<uint64_t, SemEntry> g_semaphores;
+std::mutex g_semaphoresMutex;
 
 // ---- Thread-local last error ----
 thread_local uint32_t g_lastError = 0;
@@ -451,69 +480,175 @@ extern "C" uint64_t host_GetProcessHeap(uint64_t, uint64_t, uint64_t, uint64_t,
 // ---- Synchronization ----
 extern "C" uint64_t host_InitializeCriticalSection(uint64_t csPtr, uint64_t,
                                                    uint64_t, uint64_t,
-                                                   uint64_t, uint64_t,
-                                                   uint64_t, uint64_t) {
-    (void)csPtr;
-    return 0;
+                                                   uint64_t, uint64_t, uint64_t,
+                                                   uint64_t) {
+    pthread_mutex_t* m = new pthread_mutex_t();
+    pthread_mutex_init(m, nullptr);
+    std::lock_guard<std::mutex> lock(g_criticalSectionsMutex);
+    g_criticalSections.emplace(csPtr, m);
+    return 1;
 }
 
 extern "C" uint64_t host_EnterCriticalSection(uint64_t csPtr, uint64_t,
                                               uint64_t, uint64_t,
-                                              uint64_t, uint64_t,
-                                              uint64_t, uint64_t) {
-    (void)csPtr;
-    return 0;
+                                              uint64_t, uint64_t, uint64_t,
+                                              uint64_t) {
+    pthread_mutex_t* m = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_criticalSectionsMutex);
+        auto it = g_criticalSections.find(csPtr);
+        if (it == g_criticalSections.end()) return 0;
+        m = it->second;
+    }
+    pthread_mutex_lock(m);
+    return 1;
 }
 
 extern "C" uint64_t host_LeaveCriticalSection(uint64_t csPtr, uint64_t,
                                               uint64_t, uint64_t,
-                                              uint64_t, uint64_t,
-                                              uint64_t, uint64_t) {
-    (void)csPtr;
-    return 0;
+                                              uint64_t, uint64_t, uint64_t,
+                                              uint64_t) {
+    pthread_mutex_t* m = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_criticalSectionsMutex);
+        auto it = g_criticalSections.find(csPtr);
+        if (it == g_criticalSections.end()) return 0;
+        m = it->second;
+    }
+    pthread_mutex_unlock(m);
+    return 1;
 }
 
 extern "C" uint64_t host_DeleteCriticalSection(uint64_t csPtr, uint64_t,
                                                uint64_t, uint64_t,
-                                               uint64_t, uint64_t,
-                                               uint64_t, uint64_t) {
-    (void)csPtr;
-    return 0;
+                                               uint64_t, uint64_t, uint64_t,
+                                               uint64_t) {
+    std::lock_guard<std::mutex> lock(g_criticalSectionsMutex);
+    auto it = g_criticalSections.find(csPtr);
+    if (it == g_criticalSections.end()) return 0;
+    pthread_mutex_destroy(it->second);
+    delete it->second;
+    g_criticalSections.erase(it);
+    return 1;
 }
 
 extern "C" uint64_t host_CreateEventA(uint64_t sa, uint64_t manualReset,
                                       uint64_t initialState, uint64_t name,
                                       uint64_t, uint64_t, uint64_t,
                                       uint64_t) {
-    (void)sa; (void)manualReset; (void)initialState; (void)name;
-    return allocHandle(2); // event handle
+    (void)sa; (void)name;
+    uint64_t h = allocHandle(2); // event handle
+    EventEntry e;
+    e.manualReset = manualReset != 0;
+    e.signaled = initialState != 0;
+    pthread_mutex_init(&e.mutex, nullptr);
+    pthread_cond_init(&e.cond, nullptr);
+    std::lock_guard<std::mutex> lock(g_eventsMutex);
+    g_events.emplace(h, e);
+    return h;
 }
 
 extern "C" uint64_t host_SetEvent(uint64_t event, uint64_t, uint64_t, uint64_t,
                                   uint64_t, uint64_t, uint64_t, uint64_t) {
-    (void)event;
+    std::lock_guard<std::mutex> lock(g_eventsMutex);
+    auto it = g_events.find(event);
+    if (it == g_events.end()) return 0;
+    EventEntry& e = it->second;
+    pthread_mutex_lock(&e.mutex);
+    e.signaled = true;
+    pthread_cond_broadcast(&e.cond);
+    pthread_mutex_unlock(&e.mutex);
     return 1;
 }
 
 extern "C" uint64_t host_WaitForSingleObject(uint64_t handle, uint64_t timeout,
-                                            uint64_t, uint64_t, uint64_t,
-                                            uint64_t, uint64_t, uint64_t) {
-    (void)handle; (void)timeout;
-    return 0; // WAIT_OBJECT_0
+                                             uint64_t, uint64_t, uint64_t,
+                                             uint64_t, uint64_t, uint64_t) {
+    // Try event first
+    {
+        EventEntry* e = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_eventsMutex);
+            auto it = g_events.find(handle);
+            if (it != g_events.end()) e = &it->second;
+        }
+        if (e) {
+            pthread_mutex_lock(&e->mutex);
+            while (!e->signaled) {
+                if (timeout == 0) {
+                    pthread_mutex_unlock(&e->mutex);
+                    return 0x102; // WAIT_TIMEOUT
+                }
+                pthread_cond_wait(&e->cond, &e->mutex);
+            }
+            if (!e->manualReset) e->signaled = false;
+            pthread_mutex_unlock(&e->mutex);
+            return 0; // WAIT_OBJECT_0
+        }
+    }
+
+    // Try mutex
+    {
+        pthread_mutex_t* m = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_mutexesMutex);
+            auto it = g_mutexes.find(handle);
+            if (it != g_mutexes.end()) m = it->second;
+        }
+        if (m) {
+            pthread_mutex_lock(m);
+            return 0; // WAIT_OBJECT_0
+        }
+    }
+
+    // Try semaphore
+    {
+        sem_t* s = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_semaphoresMutex);
+            auto it = g_semaphores.find(handle);
+            if (it != g_semaphores.end()) s = &it->second.sem;
+        }
+        if (s) {
+            if (sem_trywait(s) == 0) return 0; // WAIT_OBJECT_0
+            if (timeout == 0) return 0x102; // WAIT_TIMEOUT
+            sem_wait(s);
+            return 0;
+        }
+    }
+
+    // File handle — always signaled
+    {
+        std::lock_guard<std::mutex> lock(g_handlesMutex);
+        if (g_handles.count(handle)) return 0;
+    }
+
+    return 0x102; // WAIT_TIMEOUT for unknown handle
 }
 
 extern "C" uint64_t host_CreateMutexA(uint64_t sa, uint64_t initialOwner,
                                       uint64_t name, uint64_t,
-                                      uint64_t, uint64_t, uint64_t,
-                                      uint64_t) {
+                                      uint64_t, uint64_t, uint64_t, uint64_t) {
     (void)sa; (void)initialOwner; (void)name;
-    return allocHandle(3); // mutex handle
+    uint64_t h = allocHandle(3); // mutex handle
+    pthread_mutex_t* m = new pthread_mutex_t();
+    pthread_mutex_init(m, nullptr);
+    std::lock_guard<std::mutex> lock(g_mutexesMutex);
+    g_mutexes.emplace(h, m);
+    return h;
 }
 
 extern "C" uint64_t host_ReleaseMutex(uint64_t mutex, uint64_t, uint64_t,
-                                      uint64_t, uint64_t, uint64_t,
-                                      uint64_t, uint64_t) {
-    (void)mutex;
+                                      uint64_t, uint64_t, uint64_t, uint64_t,
+                                      uint64_t) {
+    pthread_mutex_t* m = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_mutexesMutex);
+        auto it = g_mutexes.find(mutex);
+        if (it == g_mutexes.end()) return 0;
+        m = it->second;
+    }
+    pthread_mutex_unlock(m);
     return 1;
 }
 
@@ -521,15 +656,25 @@ extern "C" uint64_t host_CreateSemaphoreA(uint64_t sa, uint64_t initialCount,
                                           uint64_t maxCount, uint64_t name,
                                           uint64_t, uint64_t, uint64_t,
                                           uint64_t) {
-    (void)sa; (void)initialCount; (void)maxCount; (void)name;
-    return allocHandle(4); // semaphore handle
+    (void)sa; (void)maxCount; (void)name;
+    uint64_t h = allocHandle(4); // semaphore handle
+    SemEntry se;
+    sem_init(&se.sem, 0, static_cast<unsigned>(initialCount));
+    std::lock_guard<std::mutex> lock(g_semaphoresMutex);
+    g_semaphores.emplace(h, se);
+    return h;
 }
 
 extern "C" uint64_t host_ReleaseSemaphore(uint64_t sem, uint64_t count,
                                           uint64_t prevCount, uint64_t,
                                           uint64_t, uint64_t, uint64_t,
                                           uint64_t) {
-    (void)sem; (void)count; (void)prevCount;
+    (void)prevCount;
+    std::lock_guard<std::mutex> lock(g_semaphoresMutex);
+    auto it = g_semaphores.find(sem);
+    if (it == g_semaphores.end()) return 0;
+    SemEntry& se = it->second;
+    for (uint64_t i = 0; i < count; ++i) sem_post(&se.sem);
     return 1;
 }
 

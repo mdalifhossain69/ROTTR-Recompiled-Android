@@ -122,6 +122,11 @@ target_link_libraries(test_win32_files PRIVATE rottr_core)
 target_compile_options(test_win32_files PRIVATE -Wall -Wextra -Werror)
 add_test(NAME win32_files COMMAND test_win32_files)
 
+add_executable(test_win32_sync tests/test_win32_sync.cpp)
+target_link_libraries(test_win32_sync PRIVATE rottr_core)
+target_compile_options(test_win32_sync PRIVATE -Wall -Wextra -Werror -pthread)
+add_test(NAME win32_sync COMMAND test_win32_sync)
+
 add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
 target_link_libraries(test_x64_runtime PRIVATE rottr_core)
 target_compile_options(test_x64_runtime PRIVATE -Wall -Wextra -Werror)
