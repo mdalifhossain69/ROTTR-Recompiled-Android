@@ -26,6 +26,9 @@ public class MainActivity extends Activity {
     private static final int REQUEST_FEXCORE_PACKAGE = 4202;
     private static final String PROTON_104_URL = "https://downloads.gamenative.app/proton-10.0-4-arm64ec.wcp";
     private static final String DOWNLOAD_PREF = "proton_104_download_id";
+    private static final String FEXCORE_DOWNLOAD_PREF = "fexcore_2611_download_id";
+    private static final String FEXCORE_2611_URL = "https://downloads.gamenative.app/FEXCore-2611-gn-8.wcp";
+    private BootScreen activeBoot;
     private static final String PREFS = "rottr_launcher";
     private Uri gameFolder;
     private LauncherScreen launcher;
@@ -36,9 +39,14 @@ public class MainActivity extends Activity {
         @Override public void onReceive(Context context, Intent intent) {
             if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
             long completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
-            long expectedId = getSharedPreferences(PREFS, MODE_PRIVATE).getLong(DOWNLOAD_PREF, -2L);
-            if (completedId != expectedId) return;
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(DOWNLOAD_PREF).apply();
+            android.content.SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+            long protonId = prefs.getLong(DOWNLOAD_PREF, -2L);
+            long fexId = prefs.getLong(FEXCORE_DOWNLOAD_PREF, -3L);
+            String componentType = completedId == protonId ? RuntimePackageInstaller.TYPE_PROTON
+                    : completedId == fexId ? RuntimePackageInstaller.TYPE_FEXCORE : null;
+            if (componentType == null) return;
+            prefs.edit().remove(RuntimePackageInstaller.TYPE_PROTON.equals(componentType)
+                    ? DOWNLOAD_PREF : FEXCORE_DOWNLOAD_PREF).apply();
             DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
             try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(completedId))) {
                 if (cursor == null || !cursor.moveToFirst()) {
@@ -48,21 +56,23 @@ public class MainActivity extends Activity {
                 int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
                 if (status != DownloadManager.STATUS_SUCCESSFUL) {
                     int reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
-                    showRuntimeDownloadError("Proton download failed (code " + reason + "). Try again or import a WCP file manually.");
+                    showRuntimeDownloadError(componentType + " download failed (code " + reason + ").");
                     return;
                 }
             } catch (Exception error) {
-                LogUtils.exception("check Proton download", error);
-                showRuntimeDownloadError("Could not verify the Proton download: " + error.getMessage());
+                LogUtils.exception("check runtime download", error);
+                showRuntimeDownloadError("Could not verify runtime download: " + error.getMessage());
                 return;
             }
             Uri downloaded = manager.getUriForDownloadedFile(completedId);
             if (downloaded == null) {
-                showRuntimeDownloadError("Downloaded Proton package could not be opened.");
+                showRuntimeDownloadError("Downloaded runtime package could not be opened.");
                 return;
             }
-            Toast.makeText(MainActivity.this, "Proton 10.0-4 downloaded. Importing...", Toast.LENGTH_LONG).show();
-            installRuntimePackage(downloaded, RuntimePackageInstaller.TYPE_PROTON);
+            if (activeBoot != null && activeBoot.isAttachedToWindow()) {
+                activeBoot.addLine("Installing compatibility component...");
+            }
+            installRuntimePackage(downloaded, componentType);
         }
     };
 
@@ -156,10 +166,12 @@ public class MainActivity extends Activity {
             return;
         }
         showBootScreen();
+        ensureRuntimeComponents();
     }
 
     private void showBootScreen() {
         BootScreen boot = new BootScreen(this, this::showLauncher);
+        activeBoot = boot;
         bootScreenVisible = true;
         launcher = null;
         NativeBridge.setStagesDone(1);
@@ -213,7 +225,6 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("ROTTR launcher")
                 .setMessage("Graphics options are saved on this device; the native renderer does not use them yet.\n\n" + logStatus() + "\n\n" + RuntimePackageInstaller.status(this))
                 .setPositiveButton("OK", null)
-                .setNegativeButton("Install runtime", (dialog, which) -> showRuntimeInstaller())
                 .setNeutralButton("Log access", (dialog, which) -> openLogAccessSettings())
                 .show();
     }
@@ -234,25 +245,43 @@ public class MainActivity extends Activity {
                 .setNegativeButton("Cancel", null).show();
     }
 
-    private void downloadProton104() {
+    private void ensureRuntimeComponents() {
+        java.io.File root = new java.io.File(getFilesDir(), "runtime-components");
+        boolean protonReady = new java.io.File(root, "proton-arm64ec/profile.json").isFile();
+        boolean fexReady = new java.io.File(root, "runtime-prefix/drive_c/windows/system32/libarm64ecfex.dll").isFile()
+                && new java.io.File(root, "runtime-prefix/drive_c/windows/system32/libwow64fex.dll").isFile();
+        if (protonReady && fexReady) {
+            if (activeBoot != null) activeBoot.addLine("Compatibility components are installed.");
+            return;
+        }
+        if (!protonReady) {
+            queueRuntimeDownload(RuntimePackageInstaller.TYPE_PROTON, PROTON_104_URL, DOWNLOAD_PREF,
+                    "Proton 10.0-4 ARM64EC");
+        } else if (!fexReady) {
+            queueRuntimeDownload(RuntimePackageInstaller.TYPE_FEXCORE, FEXCORE_2611_URL,
+                    FEXCORE_DOWNLOAD_PREF, "FEXCore ARM64EC");
+        }
+    }
+
+    private void queueRuntimeDownload(String type, String url, String preferenceKey, String label) {
         try {
             DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
             if (manager == null) throw new IllegalStateException("Android Download Manager is unavailable");
-            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(PROTON_104_URL));
-            request.setTitle("ROTTR runtime: Proton 10.0-4 ARM64EC");
-            request.setDescription("Downloading the ARM64EC compatibility component");
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setTitle("ROTTR game runtime");
+            request.setDescription("Preparing game compatibility components");
             request.setMimeType("application/octet-stream");
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
             request.setAllowedOverMetered(true);
             request.setAllowedOverRoaming(false);
             request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS,
-                    "proton-10.0-4-arm64ec.wcp");
+                    type.toLowerCase() + "-runtime.wcp");
             long id = manager.enqueue(request);
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putLong(DOWNLOAD_PREF, id).apply();
-            Toast.makeText(this, "Downloading Proton 10.0-4 ARM64EC", Toast.LENGTH_LONG).show();
-            LogUtils.i(TAG, "Queued Proton 10.0-4 ARM64EC download id=" + id);
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putLong(preferenceKey, id).apply();
+            if (activeBoot != null) activeBoot.addLine("Downloading game compatibility files...");
+            LogUtils.i(TAG, "Queued " + label + " download id=" + id);
         } catch (Exception error) {
-            LogUtils.exception("download Proton 10.0-4 ARM64EC", error);
+            LogUtils.exception("download " + label, error);
             showRuntimeDownloadError(error.getMessage() == null ? error.toString() : error.getMessage());
         }
     }
@@ -291,6 +320,9 @@ public class MainActivity extends Activity {
                             Toast.LENGTH_LONG).show();
                     LogUtils.i(TAG, "Runtime component imported: " + result.type + " "
                             + result.version + " at " + result.directory);
+                    ensureRuntimeComponents();
+                    if (RuntimePackageInstaller.TYPE_FEXCORE.equals(type) && activeBoot != null)
+                        activeBoot.addLine("Compatibility files installed. Preparing native game launch...");
                 });
             } catch (Exception error) {
                 LogUtils.exception("import " + type + " runtime package", error);
