@@ -80,6 +80,80 @@ private:
 
 uint64_t& reg(rottr_cpu& cpu, unsigned index) { return cpu.gpr[index & 15U]; }
 
+struct RmOperand {
+    bool isRegister = false;
+    unsigned registerIndex = 0;
+    uint64_t address = 0;
+};
+
+bool decodeRmOperand(Decoder& decoder, const rottr_cpu& cpu, uint8_t modrm,
+                     unsigned rexB, unsigned rexX, RmOperand& operand) {
+    const unsigned mod = modrm >> 6U;
+    const unsigned rm = modrm & 7U;
+    if (mod == 3) {
+        operand.isRegister = true;
+        operand.registerIndex = rm | (rexB << 3U);
+        return true;
+    }
+
+    uint64_t base = 0;
+    uint64_t index = 0;
+    unsigned scale = 0;
+    bool hasBase = true;
+    bool ripRelative = false;
+
+    if (rm == 4) {
+        uint8_t sib = 0;
+        if (!decoder.byte(sib)) return false;
+        scale = sib >> 6U;
+        const unsigned indexField = (sib >> 3U) & 7U;
+        const unsigned baseField = sib & 7U;
+        if (indexField != 4 || rexX != 0)
+            index = cpu.gpr[indexField | (rexX << 3U)];
+        if (mod == 0 && baseField == 5) hasBase = false;
+        else base = cpu.gpr[baseField | (rexB << 3U)];
+    } else if (mod == 0 && rm == 5) {
+        hasBase = false;
+        ripRelative = true;
+    } else {
+        base = cpu.gpr[rm | (rexB << 3U)];
+    }
+
+    int64_t displacement = 0;
+    if (mod == 1) {
+        int8_t value = 0;
+        if (!decoder.immediate(value)) return false;
+        displacement = value;
+    } else if (mod == 2 || (mod == 0 && !hasBase)) {
+        int32_t value = 0;
+        if (!decoder.immediate(value)) return false;
+        displacement = value;
+    }
+
+    if (ripRelative) base = decoder.next();
+    operand.address = (hasBase || ripRelative ? base : 0) +
+                      (index << scale) + static_cast<uint64_t>(displacement);
+    return true;
+}
+
+bool readOperand(const X64GuestMemory& memory, const rottr_cpu& cpu,
+                 const RmOperand& operand, uint64_t& value) {
+    if (operand.isRegister) {
+        value = cpu.gpr[operand.registerIndex];
+        return true;
+    }
+    return readGuest(memory, operand.address, &value, sizeof(value));
+}
+
+bool writeOperand(const X64GuestMemory& memory, rottr_cpu& cpu,
+                  const RmOperand& operand, uint64_t value) {
+    if (operand.isRegister) {
+        cpu.gpr[operand.registerIndex] = value;
+        return true;
+    }
+    return writeGuest(memory, operand.address, &value, sizeof(value));
+}
+
 bool evenParity(uint8_t value) {
     value ^= static_cast<uint8_t>(value >> 4);
     value &= 0x0f;
@@ -155,6 +229,7 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         const bool rexW = (rex & 0x08U) != 0;
         const unsigned rexR = (rex >> 2U) & 1U;
         const unsigned rexB = rex & 1U;
+        const unsigned rexX = (rex >> 1U) & 1U;
 
         if (opcode == 0x90) {
             cpu.rip = decoder.next();
@@ -281,37 +356,70 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                                 "immediate arithmetic group operation is not implemented");
             }
             cpu.rip = decoder.next();
-        } else if (opcode == 0x01 || opcode == 0x03 || opcode == 0x29 ||
+        } else if (opcode == 0x89 || opcode == 0x8b ||
+                   opcode == 0x01 || opcode == 0x03 || opcode == 0x29 ||
                    opcode == 0x2b || opcode == 0x31 || opcode == 0x33 ||
                    opcode == 0x39 || opcode == 0x3b) {
             if (!rexW)
                 return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
-                            "only 64-bit register arithmetic encodings are supported");
+                            "only 64-bit MOV and arithmetic encodings are supported");
             uint8_t modrm = 0;
             if (!decoder.byte(modrm))
                 return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
-                            "truncated arithmetic ModRM");
-            const unsigned mod = modrm >> 6U;
-            if (mod != 3)
-                return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
-                            "memory operands are not supported by this interpreter slice");
-            const unsigned rm = (modrm & 7U) | (rexB << 3U);
-            const unsigned source = ((modrm >> 3U) & 7U) | (rexR << 3U);
-            const bool destinationIsReg = opcode == 0x03 || opcode == 0x2b ||
-                                          opcode == 0x33 || opcode == 0x3b;
-            const unsigned destination = destinationIsReg ? source : rm;
-            const unsigned operand = destinationIsReg ? rm : source;
-            const uint64_t left = reg(cpu, destination);
-            const uint64_t right = reg(cpu, operand);
-            switch (opcode) {
-                case 0x01: case 0x03: reg(cpu, destination) = add64(cpu, left, right); break;
-                case 0x29: case 0x2b: reg(cpu, destination) = sub64(cpu, left, right); break;
-                case 0x31: case 0x33:
-                    reg(cpu, destination) = left ^ right;
-                    setLogicFlags(cpu, reg(cpu, destination));
-                    break;
-                case 0x39: case 0x3b: (void) sub64(cpu, left, right); break;
-                default: break;
+                            "truncated ModRM byte");
+            RmOperand rmOperand;
+            if (!decodeRmOperand(decoder, cpu, modrm, rexB, rexX, rmOperand))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated ModRM/SIB displacement");
+            const unsigned regField = ((modrm >> 3U) & 7U) | (rexR << 3U);
+            if (opcode == 0x89 || opcode == 0x8b) {
+                if (opcode == 0x89) {
+                    if (!writeOperand(memory, cpu, rmOperand, reg(cpu, regField)))
+                        return stop(rmOperand.isRegister ? X64StopReason::InvalidMemory :
+                                    (memory.writable ? X64StopReason::InvalidMemory :
+                                                       X64StopReason::ReadOnlyMemory),
+                                    executed, rmOperand.address, "MOV destination write failed");
+                } else {
+                    uint64_t value = 0;
+                    if (!readOperand(memory, cpu, rmOperand, value))
+                        return stop(X64StopReason::InvalidMemory, executed, rmOperand.address,
+                                    "MOV source read failed");
+                    reg(cpu, regField) = value;
+                }
+            } else {
+                const bool destinationIsReg = opcode == 0x03 || opcode == 0x2b ||
+                                              opcode == 0x33 || opcode == 0x3b;
+                const uint64_t sourceValue = destinationIsReg ? 0 : reg(cpu, regField);
+                uint64_t rmValue = 0;
+                if (!readOperand(memory, cpu, rmOperand, rmValue))
+                    return stop(X64StopReason::InvalidMemory, executed, rmOperand.address,
+                                "arithmetic source read failed");
+                const uint64_t left = destinationIsReg ? reg(cpu, regField) : rmValue;
+                const uint64_t right = destinationIsReg ? rmValue : sourceValue;
+                uint64_t result = left;
+                bool writeResult = true;
+                switch (opcode) {
+                    case 0x01: case 0x03: result = add64(cpu, left, right); break;
+                    case 0x29: case 0x2b: result = sub64(cpu, left, right); break;
+                    case 0x31: case 0x33:
+                        result = left ^ right;
+                        setLogicFlags(cpu, result);
+                        break;
+                    case 0x39: case 0x3b:
+                        (void) sub64(cpu, left, right);
+                        writeResult = false;
+                        break;
+                    default: break;
+                }
+                if (writeResult) {
+                    const bool stored = destinationIsReg ?
+                            (reg(cpu, regField) = result, true) :
+                            writeOperand(memory, cpu, rmOperand, result);
+                    if (!stored)
+                        return stop(memory.writable ? X64StopReason::InvalidMemory :
+                                                      X64StopReason::ReadOnlyMemory,
+                                    executed, rmOperand.address, "arithmetic destination write failed");
+                }
             }
             cpu.rip = decoder.next();
         } else {
