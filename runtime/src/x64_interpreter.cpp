@@ -135,6 +135,7 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
     }
 
     uint64_t executed = 0;
+    uint64_t callDepth = 0;
     while (executed < instructionBudget) {
         const uint64_t instructionAddress = cpu.rip;
         Decoder decoder(memory, instructionAddress);
@@ -169,7 +170,9 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
             cpu.gpr[4] += sizeof(target);
             cpu.rip = target;
             ++executed;
-            return stop(X64StopReason::Returned, executed, target, "RET reached");
+            if (callDepth == 0)
+                return stop(X64StopReason::Returned, executed, target, "top-level RET reached");
+            --callDepth;
         } else if (opcode >= 0xb8 && opcode <= 0xbf) {
             const unsigned destination = (opcode - 0xb8U) | (rexB << 3U);
             if (rexW) {
@@ -201,8 +204,11 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                 if (!readGuest(memory, cpu.gpr[4], &value, sizeof(value)))
                     return stop(X64StopReason::InvalidMemory, executed, cpu.gpr[4],
                                 "POP stack read failed");
-                reg(cpu, index) = value;
-                cpu.gpr[4] += sizeof(uint64_t);
+                if (index == 4) cpu.gpr[4] = value;
+                else {
+                    reg(cpu, index) = value;
+                    cpu.gpr[4] += sizeof(uint64_t);
+                }
             }
             cpu.rip = decoder.next();
         } else if (opcode == 0xe8 || opcode == 0xe9) {
@@ -219,6 +225,7 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                                                   X64StopReason::ReadOnlyMemory,
                                 executed, newStack, "CALL stack write failed");
                 cpu.gpr[4] = newStack;
+                ++callDepth;
             }
             cpu.rip = target;
         } else if (opcode == 0xeb || opcode == 0x74 || opcode == 0x75) {
