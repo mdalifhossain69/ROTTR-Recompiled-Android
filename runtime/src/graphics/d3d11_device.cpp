@@ -178,8 +178,11 @@ bool ImmediateContext::drawIndexed(uint32_t count, uint32_t start, int32_t base,
             !device_.backend()->bindVertexBuffer(slot, vertexBuffers_[slot]->id,
                                                  vertexStrides_[slot], vertexOffsets_[slot]))) return false;
     }
-    if (!device_.backend()->bindIndexBuffer(indexBuffer_->id, indexFormat_, indexOffset_ +
-            start * (indexFormat_ == IndexFormat::UInt16 ? 2U : 4U))) return false;
+    const uint64_t indexByteOffset = static_cast<uint64_t>(indexOffset_) +
+        static_cast<uint64_t>(start) * (indexFormat_ == IndexFormat::UInt16 ? 2U : 4U);
+    if (indexByteOffset > UINT32_MAX ||
+        !device_.backend()->bindIndexBuffer(indexBuffer_->id, indexFormat_,
+                                            static_cast<uint32_t>(indexByteOffset))) return false;
     if (!device_.backend()->drawIndexed(count, 0, base, instances)) return false;
     DrawCommand c; c.type = DrawCommand::Type::DrawIndexed; c.a = count; c.b = start;
     c.c = static_cast<uint32_t>(base); c.d = instances; c.resource = indexBuffer_->id;
