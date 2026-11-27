@@ -360,16 +360,16 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         } else if (opcode == 0x81 || opcode == 0x83) {
             if (!rexW)
                 return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
-                            "only 64-bit immediate arithmetic encodings are supported");
+                            "only 64-bit immediate group-1 encodings are supported");
             uint8_t modrm = 0;
             if (!decoder.byte(modrm))
                 return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
                             "truncated immediate arithmetic ModRM");
-            if ((modrm >> 6U) != 3)
-                return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
-                            "memory operands are not supported by immediate arithmetic");
+            RmOperand destination;
+            if (!decodeRmOperand(decoder, cpu, modrm, rexB, rexX, destination))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated immediate arithmetic address");
             const unsigned operation = (modrm >> 3U) & 7U;
-            const unsigned destination = (modrm & 7U) | (rexB << 3U);
             int64_t signedImmediate = 0;
             if (opcode == 0x83) {
                 int8_t value = 0;
@@ -384,21 +384,43 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                                 "truncated sign-extended imm32");
                 signedImmediate = value;
             }
-            const uint64_t left = reg(cpu, destination);
+            uint64_t left = 0;
+            if (!readOperand(memory, cpu, destination, left))
+                return stop(X64StopReason::InvalidMemory, executed, destination.address,
+                            "immediate arithmetic destination read failed");
             const uint64_t right = static_cast<uint64_t>(signedImmediate);
+            uint64_t result = left;
+            bool writeResult = true;
             switch (operation) {
-                case 0: reg(cpu, destination) = add64(cpu, left, right); break;
-                case 5: reg(cpu, destination) = sub64(cpu, left, right); break;
-                case 6:
-                    reg(cpu, destination) = left ^ right;
-                    setLogicFlags(cpu, reg(cpu, destination));
+                case 0: result = add64(cpu, left, right); break;
+                case 1:
+                    result = left | right;
+                    setLogicFlags(cpu, result);
                     break;
-                case 7: (void) sub64(cpu, left, right); break;
+                case 4:
+                    result = left & right;
+                    setLogicFlags(cpu, result);
+                    break;
+                case 5: result = sub64(cpu, left, right); break;
+                case 6:
+                    result = left ^ right;
+                    setLogicFlags(cpu, result);
+                    break;
+                case 7:
+                    (void) sub64(cpu, left, right);
+                    writeResult = false;
+                    break;
                 default:
                     return stop(X64StopReason::UnsupportedInstruction, executed,
                                 instructionAddress,
-                                "immediate arithmetic group operation is not implemented");
+                                "immediate group-1 operation is not implemented");
             }
+            if (writeResult && !writeOperand(memory, cpu, destination, result))
+                return stop(destination.isRegister ? X64StopReason::InvalidMemory :
+                            (memory.writable ? X64StopReason::InvalidMemory :
+                                               X64StopReason::ReadOnlyMemory),
+                            executed, destination.address,
+                            "immediate arithmetic destination write failed");
             cpu.rip = decoder.next();
         } else if (opcode == 0x89 || opcode == 0x8b ||
                    opcode == 0x01 || opcode == 0x03 || opcode == 0x29 ||
