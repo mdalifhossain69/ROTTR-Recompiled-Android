@@ -19,7 +19,7 @@ bool sameShape(const Resource& a, const Resource& b) {
 Device::Device(std::shared_ptr<Backend> backend) : backend_(std::move(backend)) {}
 Device::~Device() {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& weak : resources_) if (auto resource = weak.lock()) {
+    for (auto& resource : resources_) if (resource) {
         if (resource->alive && backend_) backend_->destroyResource(resource->id);
         resource->alive = false;
     }
