@@ -5,18 +5,17 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Portable part: guest state, Remill runtime helpers, Win32 stubs.
+# Portable part: guest state, Remill helpers, Win32 stubs and runtime probes.
 add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/guest.c
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/remill_intrinsics.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_stubs.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_runtime.cpp
 )
 target_include_directories(rottr_core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
 target_compile_options(rottr_core PRIVATE -Wall -Wextra -Werror)
 set_target_properties(rottr_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Graphics, audio, input, video and the entry point use Android APIs, so they are
-# built only for Android. Work on them is paused: see docs/NEXT_STEPS.md.
 if(ANDROID)
     add_library(rottr_runtime STATIC
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/graphics.cpp
@@ -39,9 +38,7 @@ if(ANDROID)
     target_include_directories(rottr_android PRIVATE ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
     target_link_libraries(rottr_android PRIVATE rottr_runtime android log OpenSLES vulkan aaudio)
     target_compile_options(rottr_android PRIVATE -Wall -Wextra -Werror)
-    set_target_properties(rottr_android PROPERTIES
-        ANDROID_SO_UNDEFINED OFF
-    )
+    set_target_properties(rottr_android PROPERTIES ANDROID_SO_UNDEFINED OFF)
     return()
 endif()
 
@@ -61,7 +58,11 @@ target_link_libraries(test_runtime PRIVATE rottr_core)
 target_compile_options(test_runtime PRIVATE -Wall -Wextra -Werror)
 add_test(NAME runtime COMMAND test_runtime)
 
-# The Vulkan renderer also runs on a desktop headless surface (e.g. Mesa lavapipe).
+add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
+target_link_libraries(test_x64_runtime PRIVATE rottr_core)
+target_compile_options(test_x64_runtime PRIVATE -Wall -Wextra -Werror)
+add_test(NAME x64_runtime COMMAND test_x64_runtime)
+
 find_package(Vulkan)
 if(Vulkan_FOUND)
   add_executable(test_vulkan tests/test_vulkan.cpp runtime/src/vk/vulkan_renderer.cpp)
@@ -78,6 +79,5 @@ if(Python3_FOUND)
   foreach(name recon functions harness lifted)
     add_test(NAME ${name} COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_${name}.py)
   endforeach()
-  # unittest exits with 0 when it skips; report that as skipped, not passed.
   set_tests_properties(harness lifted PROPERTIES SKIP_REGULAR_EXPRESSION "OK \\(skipped=")
 endif()
