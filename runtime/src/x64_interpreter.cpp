@@ -638,8 +638,6 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                    opcode == 0x38 || opcode == 0x3a ||
                    opcode == 0x39 || opcode == 0x3b ||
                    opcode == 0x84 || opcode == 0x85) {
-            const bool byteOperation = (opcode & 1U) == 0 &&
-                    opcode != 0x88 && opcode != 0x8a;
             const size_t width = (opcode == 0x88 || opcode == 0x8a ||
                                   opcode == 0x00 || opcode == 0x02 ||
                                   opcode == 0x28 || opcode == 0x2a ||
@@ -648,12 +646,6 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                                   opcode == 0x30 || opcode == 0x32 ||
                                   opcode == 0x38 || opcode == 0x3a ||
                                   opcode == 0x84) ? 1U : operandBytes;
-            (void) byteOperation;
-            if (width == 1 && rex == 0 && ((opcode == 0x88 || opcode == 0x8a) ||
-                (opcode >= 0x00 && opcode <= 0x3a)))
-                return stop(X64StopReason::UnsupportedInstruction, executed,
-                            instructionAddress,
-                            "legacy high-byte register encodings are not implemented");
             uint8_t modrm = 0;
             if (!decoder.byte(modrm))
                 return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
@@ -663,6 +655,15 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                 return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
                             "truncated ModRM/SIB displacement");
             const unsigned regField = ((modrm >> 3U) & 7U) | (rexR << 3U);
+            const bool byteWidth = width == 1;
+            const bool byteRegFieldUsed = opcode != 0x84 && opcode != 0x85;
+            if (byteWidth && rex == 0 &&
+                ((rmOperand.isRegister && rmOperand.registerIndex >= 4) ||
+                 (byteRegFieldUsed && ((modrm >> 3U) & 7U) >= 4))) {
+                return stop(X64StopReason::UnsupportedInstruction, executed,
+                            instructionAddress,
+                            "legacy AH/CH/DH/BH byte registers are not implemented");
+            }
             const bool moveToRm = opcode == 0x88 || opcode == 0x89;
             const bool moveFromRm = opcode == 0x8a || opcode == 0x8b;
             if (moveToRm || moveFromRm) {
