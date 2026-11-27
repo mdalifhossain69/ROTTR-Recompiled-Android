@@ -172,6 +172,20 @@ bool readOperand(const X64GuestMemory& memory, const rottr_cpu& cpu,
     return readGuest(memory, operand.address, &value, sizeof(value));
 }
 
+
+bool readOperandSized(const X64GuestMemory& memory, const rottr_cpu& cpu,
+                      const RmOperand& operand, size_t size, uint64_t& value) {
+    value = 0;
+    if (operand.isRegister) {
+        value = cpu.gpr[operand.registerIndex];
+        if (size == 1) value &= 0xffU;
+        else if (size == 2) value &= 0xffffU;
+        else if (size == 4) value &= 0xffffffffU;
+        return true;
+    }
+    return readGuest(memory, operand.address, &value, size);
+}
+
 bool writeOperand(const X64GuestMemory& memory, rottr_cpu& cpu,
                   const RmOperand& operand, uint64_t value) {
     if (operand.isRegister) {
@@ -369,18 +383,47 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
             cpu.rip = target;
         } else if (opcode == 0x0f) {
             uint8_t secondOpcode = 0;
-            int32_t displacement = 0;
             if (!decoder.byte(secondOpcode))
                 return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
                             "truncated 0F opcode");
-            if (secondOpcode < 0x80 || secondOpcode > 0x8f)
+            if (secondOpcode >= 0x80 && secondOpcode <= 0x8f) {
+                int32_t displacement = 0;
+                if (!decoder.immediate(displacement))
+                    return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                                "truncated near conditional branch");
+                cpu.rip = conditionTrue(cpu, secondOpcode & 0x0fU) ?
+                        decoder.next() + static_cast<int64_t>(displacement) : decoder.next();
+            } else if (secondOpcode == 0xb6 || secondOpcode == 0xb7 ||
+                       secondOpcode == 0xbe || secondOpcode == 0xbf) {
+                uint8_t modrm = 0;
+                if (!decoder.byte(modrm))
+                    return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                                "truncated MOVZX/MOVSX ModRM");
+                RmOperand source;
+                if (!decodeRmOperand(decoder, cpu, modrm, rexB, rexX, source))
+                    return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                                "truncated MOVZX/MOVSX address");
+                const unsigned destination = ((modrm >> 3U) & 7U) | (rexR << 3U);
+                const size_t sourceSize = (secondOpcode == 0xb7 || secondOpcode == 0xbf) ? 2 : 1;
+                uint64_t value = 0;
+                if (!readOperandSized(memory, cpu, source, sourceSize, value))
+                    return stop(X64StopReason::InvalidMemory, executed, source.address,
+                                "MOVZX/MOVSX source read failed");
+                const bool signExtend = secondOpcode == 0xbe || secondOpcode == 0xbf;
+                if (signExtend) {
+                    if (sourceSize == 1)
+                        value = static_cast<uint64_t>(static_cast<int64_t>(
+                                static_cast<int8_t>(value)));
+                    else
+                        value = static_cast<uint64_t>(static_cast<int64_t>(
+                                static_cast<int16_t>(value)));
+                }
+                reg(cpu, destination) = rexW ? value : static_cast<uint32_t>(value);
+                cpu.rip = decoder.next();
+            } else {
                 return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
                             "unsupported two-byte opcode");
-            if (!decoder.immediate(displacement))
-                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
-                            "truncated near conditional branch");
-            cpu.rip = conditionTrue(cpu, secondOpcode & 0x0fU) ?
-                    decoder.next() + static_cast<int64_t>(displacement) : decoder.next();
+            }
         } else if (opcode >= 0x70 && opcode <= 0x7f) {
             int8_t displacement = 0;
             if (!decoder.immediate(displacement))
@@ -458,6 +501,23 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                                                X64StopReason::ReadOnlyMemory),
                             executed, destination.address,
                             "immediate arithmetic destination write failed");
+            cpu.rip = decoder.next();
+        } else if (opcode == 0x63 && rexW) {
+            uint8_t modrm = 0;
+            if (!decoder.byte(modrm))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated MOVSXD ModRM");
+            RmOperand source;
+            if (!decodeRmOperand(decoder, cpu, modrm, rexB, rexX, source))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated MOVSXD address");
+            const unsigned destination = ((modrm >> 3U) & 7U) | (rexR << 3U);
+            uint64_t value = 0;
+            if (!readOperandSized(memory, cpu, source, 4, value))
+                return stop(X64StopReason::InvalidMemory, executed, source.address,
+                            "MOVSXD source read failed");
+            reg(cpu, destination) = static_cast<uint64_t>(
+                    static_cast<int64_t>(static_cast<int32_t>(value)));
             cpu.rip = decoder.next();
         } else if (opcode == 0xc1 || opcode == 0xd1 || opcode == 0xd3) {
             if (!rexW)
