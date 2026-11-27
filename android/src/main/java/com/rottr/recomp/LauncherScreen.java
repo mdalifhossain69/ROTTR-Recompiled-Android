@@ -72,7 +72,12 @@ public final class LauncherScreen extends FrameLayout {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(20), dp(16), dp(20), dp(14));
         panel.setBackground(glassBackground());
-        body.addView(panel, new LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 0.44f));
+        android.widget.ScrollView panelScroll = new android.widget.ScrollView(activity);
+        panelScroll.setFillViewport(true);
+        panelScroll.setClipToPadding(false);
+        panelScroll.addView(panel, new android.widget.ScrollView.LayoutParams(
+                LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        body.addView(panelScroll, new LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 0.44f));
 
         TextView title = text("Rise of the Tomb Raider", 27, Color.WHITE, true);
         panel.addView(title);
