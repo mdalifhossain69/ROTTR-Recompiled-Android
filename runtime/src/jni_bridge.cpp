@@ -111,7 +111,7 @@ static void initialize_window(int width, int height, ANativeWindow* window) {
         LOGE("JNI: graphics_init failed; rendering cannot start");
     }
 
-    g_state.windowInitialized = videoOk && graphicsOk;
+    g_state.windowInitialized = true; // Track attempted initialization so partial failures are cleaned up.
 }
 
 static void release_window(void) {
