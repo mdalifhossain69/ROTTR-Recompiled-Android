@@ -138,7 +138,7 @@ Do not promise a specific FPS before real gameplay measurements exist.
 
 ## Immediate implementation order
 
-1. **CPU/runtime proof:** the initial architecture review is recorded in [`docs/adr/0001-x64-execution-android-arm64.md`](adr/0001-x64-execution-android-arm64.md). No external CPU engine has been linked. Implement a project-owned x86-64 decoder and typed guest IR, then a bounded reference interpreter and differential tests before adding AArch64 code generation. Demonstrate the controlled guest test on-device.
+1. **CPU/runtime proof:** architecture review is recorded in [`docs/adr/0001-x64-execution-android-arm64.md`](adr/0001-x64-execution-android-arm64.md). A first bounded interpreter slice and host test target now exist; it is not production ISA coverage. Expand decoder coverage, add architectural-state/flag/branch/stack/memory tests, then build AArch64 code generation and demonstrate controlled guest execution on-device.
 2. **Game loader and imports:** implement the loader and Windows APIs/middleware ROTTR requires, preserving ownership checks.
 3. **Graphics compiler and state:** provision ARM64 DXBC compilation; complete shader/resource/state translation.
 4. **Renderer integration:** connect the D3D11 context and Vulkan backend to Android's swapchain and the actual game command stream.
