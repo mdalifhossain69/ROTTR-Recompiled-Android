@@ -7,6 +7,24 @@
 #include <vector>
 
 namespace rottr::gfx::d3d11 {
+namespace {
+VkAccessFlags accessForLayout(VkImageLayout layout) {
+    switch (layout) {
+    case VK_IMAGE_LAYOUT_UNDEFINED: return 0;
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: return VK_ACCESS_TRANSFER_WRITE_BIT;
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: return VK_ACCESS_TRANSFER_READ_BIT;
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: return VK_ACCESS_SHADER_READ_BIT;
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    default: return VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    }
+}
+VkImageLayout readableLayout(uint32_t bindFlags) {
+    return (bindFlags & BindShaderResource) ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+}
+}
 
 VulkanBackend::VulkanBackend(VkPhysicalDevice physical, VkDevice device, VkQueue queue, uint32_t family)
     : physical_(physical), device_(device), queue_(queue) {
@@ -98,6 +116,8 @@ bool VulkanBackend::createTexture2D(const Texture2DDesc& desc, const Subresource
     if (desc.mipLevels > maxMipLevels || (initial && (desc.sampleCount != 1 || format->depthStencil))) return false;
     Allocation a; a.kind = ResourceKind::Texture2D; a.width = desc.width; a.height = desc.height;
     a.mipLevels = desc.mipLevels; a.arraySize = desc.arraySize; a.format = static_cast<VkFormat>(format->vkFormat);
+    a.bindFlags = desc.bindFlags; a.samples = static_cast<VkSampleCountFlagBits>(desc.sampleCount);
+    a.subresourceLayouts.assign(static_cast<size_t>(desc.mipLevels) * desc.arraySize, VK_IMAGE_LAYOUT_UNDEFINED);
     a.aspect = format->depthStencil ? (desc.format == DxgiFormat::D24UnormS8Uint ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_DEPTH_BIT) : VK_IMAGE_ASPECT_COLOR_BIT;
     VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     if (desc.bindFlags & BindShaderResource) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -203,7 +223,8 @@ bool VulkanBackend::createTexture2D(const Texture2DDesc& desc, const Subresource
         toRead.image = a.image; toRead.subresourceRange = {a.aspect, 0, desc.mipLevels, 0, desc.arraySize};
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toRead);
         if (!endCommands(command)) { destroyAllocation(staging); destroyAllocation(a); return false; }
-        destroyAllocation(staging); a.layout = toRead.newLayout;
+        destroyAllocation(staging);
+        std::fill(a.subresourceLayouts.begin(), a.subresourceLayouts.end(), toRead.newLayout);
     }
     handle = nextHandle_++; allocations_.emplace(handle, a); return true;
 }
@@ -232,9 +253,114 @@ bool VulkanBackend::copyResource(uint64_t dst, uint64_t src) {
         vkCmdCopyBuffer(cmd, s->second.buffer, d->second.buffer, 1, &region);
         return endCommands(cmd);
     }
-    // Image copies require tracked source/destination layouts and per-mip/layer regions.
-    // Refuse this operation until the D3D11 resource-state tracker is integrated.
-    return false;
+    Allocation& dstImage = d->second;
+    Allocation& srcImage = s->second;
+    if (dstImage.width != srcImage.width || dstImage.height != srcImage.height ||
+        dstImage.mipLevels != srcImage.mipLevels || dstImage.arraySize != srcImage.arraySize ||
+        dstImage.format != srcImage.format || dstImage.samples != srcImage.samples ||
+        dstImage.subresourceLayouts.size() != srcImage.subresourceLayouts.size() ||
+        dstImage.samples != VK_SAMPLE_COUNT_1_BIT) return false;
+
+    const uint32_t count = dstImage.mipLevels * dstImage.arraySize;
+    std::vector<VkImageMemoryBarrier> toTransfer;
+    std::vector<VkImageMemoryBarrier> restore;
+    std::vector<VkImageCopy> regions;
+    toTransfer.reserve(static_cast<size_t>(count) * 2U);
+    restore.reserve(static_cast<size_t>(count) * 2U);
+    regions.reserve(count);
+    std::vector<VkImageLayout> dstFinal(dstImage.subresourceLayouts.size());
+    for (uint32_t layer = 0; layer < dstImage.arraySize; ++layer) {
+        for (uint32_t mip = 0; mip < dstImage.mipLevels; ++mip) {
+            const size_t index = static_cast<size_t>(layer) * dstImage.mipLevels + mip;
+            const VkImageLayout srcOld = srcImage.subresourceLayouts[index];
+            const VkImageLayout dstOld = dstImage.subresourceLayouts[index];
+            if (srcOld == VK_IMAGE_LAYOUT_UNDEFINED) return false;
+            const VkImageLayout finalDst = dstOld == VK_IMAGE_LAYOUT_UNDEFINED
+                ? readableLayout(dstImage.bindFlags) : dstOld;
+            dstFinal[index] = finalDst;
+
+            VkImageMemoryBarrier srcBarrier{}; srcBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            srcBarrier.srcAccessMask = accessForLayout(srcOld); srcBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            srcBarrier.oldLayout = srcOld; srcBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            srcBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; srcBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            srcBarrier.image = srcImage.image; srcBarrier.subresourceRange = {srcImage.aspect, mip, 1, layer, 1};
+            if (srcOld != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) toTransfer.push_back(srcBarrier);
+
+            VkImageMemoryBarrier dstBarrier{}; dstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            dstBarrier.srcAccessMask = accessForLayout(dstOld); dstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            dstBarrier.oldLayout = dstOld; dstBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            dstBarrier.image = dstImage.image; dstBarrier.subresourceRange = {dstImage.aspect, mip, 1, layer, 1};
+            if (dstOld != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) toTransfer.push_back(dstBarrier);
+
+            VkImageCopy region{};
+            region.srcSubresource = {srcImage.aspect, mip, layer, 1};
+            region.dstSubresource = {dstImage.aspect, mip, layer, 1};
+            region.extent = {std::max(1U, srcImage.width >> mip), std::max(1U, srcImage.height >> mip), 1};
+            regions.push_back(region);
+
+            if (srcOld != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+                srcBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                srcBarrier.dstAccessMask = accessForLayout(srcOld);
+                srcBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                srcBarrier.newLayout = srcOld;
+                restore.push_back(srcBarrier);
+            }
+            if (finalDst != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                dstBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                dstBarrier.dstAccessMask = accessForLayout(finalDst);
+                dstBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                dstBarrier.newLayout = finalDst;
+                restore.push_back(dstBarrier);
+            }
+        }
+    }
+
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (!beginCommands(cmd)) return false;
+    if (!toTransfer.empty())
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, nullptr, 0, nullptr, static_cast<uint32_t>(toTransfer.size()), toTransfer.data());
+    vkCmdCopyImage(cmd, srcImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   dstImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   static_cast<uint32_t>(regions.size()), regions.data());
+    if (!restore.empty())
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             0, 0, nullptr, 0, nullptr, static_cast<uint32_t>(restore.size()), restore.data());
+    if (!endCommands(cmd)) return false;
+    dstImage.subresourceLayouts = std::move(dstFinal);
+    return true;
+}
+
+bool VulkanBackend::transitionTexture(uint64_t handle, VkImageLayout target) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = allocations_.find(handle);
+    if (it == allocations_.end() || it->second.kind != ResourceKind::Texture2D ||
+        target == VK_IMAGE_LAYOUT_UNDEFINED || target == VK_IMAGE_LAYOUT_PREINITIALIZED) return false;
+    Allocation& image = it->second;
+    std::vector<VkImageMemoryBarrier> barriers;
+    barriers.reserve(image.subresourceLayouts.size());
+    for (uint32_t layer = 0; layer < image.arraySize; ++layer) {
+        for (uint32_t mip = 0; mip < image.mipLevels; ++mip) {
+            const size_t index = static_cast<size_t>(layer) * image.mipLevels + mip;
+            const VkImageLayout old = image.subresourceLayouts[index];
+            if (old == target) continue;
+            VkImageMemoryBarrier barrier{}; barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.srcAccessMask = accessForLayout(old); barrier.dstAccessMask = accessForLayout(target);
+            barrier.oldLayout = old; barrier.newLayout = target;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = image.image; barrier.subresourceRange = {image.aspect, mip, 1, layer, 1};
+            barriers.push_back(barrier);
+        }
+    }
+    if (barriers.empty()) return true;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (!beginCommands(cmd)) return false;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         0, 0, nullptr, 0, nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
+    if (!endCommands(cmd)) return false;
+    std::fill(image.subresourceLayouts.begin(), image.subresourceLayouts.end(), target);
+    return true;
 }
 // Draw needs a translated shader pair, input layout, render pass and pipeline state.
 // Fail closed until that pipeline state is supplied; never report a fake successful draw.
