@@ -1,3 +1,13 @@
+# ROTTR Android launcher UI (2026-11-27)
+
+The app's first screen is now a landscape ROTTR launcher instead of the blank full-screen TextureView. It includes a custom snowy mountain backdrop, translucent settings panel, graphics preset, resolution scaling, texture quality, shadow and ambient-occlusion controls, Android Storage Access Framework folder picker with persisted URI permission, and a prominent PLAY action. Launcher selections are stored in SharedPreferences. The first-run screen no longer immediately interrupts the user with the all-files-access permission dialog; diagnostics use app-private storage unless public log access is already granted.
+
+**Important limitations:** this is the launcher UI and folder-selection layer only. The selected folder URI is persisted, but the native runtime does not yet expose a game-data mount/boot JNI entry point. PLAY therefore reports that guest boot integration is pending instead of switching to the known-black render surface. Graphics settings currently persist as launcher preferences; they are not yet wired into the renderer. The atmospheric backdrop is a procedural placeholder, not the reference screenshot's actual game artwork.
+
+No APK build has been run for these changes yet.
+
+---
+
 # Diagnostics runaway-log fix (2026-11-27)
 
 Fixed a recursive logcat capture bug in `LogUtils`: captured logcat lines were passed through the normal append method, which also emitted each line back to Android Log. The capture process then read its own output and repeated indefinitely. Captured lines now use a file-only writer and are never mirrored back to logcat. Diagnostic files are capped at 8 MiB; capture stops when the limit is reached.
