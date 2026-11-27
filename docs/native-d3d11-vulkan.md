@@ -32,6 +32,17 @@ Added `runtime/src/graphics/dxbc_shader.*`:
 
 **Important dependency status:** vkd3d-shader is not vendored or built by this repository yet. Therefore this commit adds the DXBC parsing and compiler integration seam, not a bundled, ready-to-run shader compiler. The Android build must provision a compatible ARM64 vkd3d-shader build before DXBC shaders can actually be translated at runtime.
 
+## Vulkan graphics-pipeline creation milestone
+
+Added an actual Vulkan graphics-pipeline creation path:
+- Calls vkCreateGraphicsPipelines() with a backend-owned VkPipelineCache and tracks successful handles for deterministic destruction.
+- Validates the create-info header, layout/render pass, shader-stage array, shader modules and entry points, and requires one vertex plus one fragment stage.
+- Rejects duplicate vertex/fragment stages and geometry/tessellation/compute stages until their feature and state requirements are explicitly provisioned.
+- The caller supplies translated shader modules, pipeline layout, render pass, vertex-input, input-assembly, viewport, rasterization, multisample, depth/stencil, color-blend and dynamic-state structures.
+- destroyGraphicsPipeline() only destroys handles owned by this backend; backend teardown destroys remaining pipelines before the cache.
+
+**Boundary:** this creates Vulkan pipeline objects, but does not yet connect D3D11 shader/resource bindings to descriptors, provide a ROTTR-compatible render pass/framebuffer, record game draw commands, or make draw()/drawIndexed() succeed. Those methods remain fail-closed. The renderer still owns a separate boot-screen render pass; no game pipeline is submitted to it.
+
 ## Not yet implemented
 
 - D3D11 COM object/device/context ABI and lifetime model.
