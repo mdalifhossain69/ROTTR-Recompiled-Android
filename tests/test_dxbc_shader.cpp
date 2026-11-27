@@ -16,7 +16,7 @@ static void put32(std::vector<uint8_t>& b, size_t p, uint32_t v) {
 
 static std::vector<uint8_t> makeDxbc(uint32_t programType = 1U) {
     // One SHDR chunk containing a minimal two-token shader program header.
-    std::vector<uint8_t> b(60U, 0);
+    std::vector<uint8_t> b(52U, 0);
     std::memcpy(b.data(), "DXBC", 4);
     put32(b, 24, static_cast<uint32_t>(b.size()));
     put32(b, 28, 1);
@@ -24,8 +24,7 @@ static std::vector<uint8_t> makeDxbc(uint32_t programType = 1U) {
     std::memcpy(b.data() + 36, "SHDR", 4);
     put32(b, 40, 8);
     put32(b, 44, (programType << 16U) | (5U << 4U));
-    // Token count follows the version token; the complete shader chunk is 16 bytes.
-    put32(b, 40, 16);
+    // The minimal shader token stream consists of version and length tokens.
     put32(b, 48, 2);
     return b;
 }
