@@ -1,1 +1,5 @@
-This directory contains legacy/reference configuration files. They are not consumed by the native Android launcher or current D3D11-to-Vulkan backend unless an explicit runtime integration is added. Their presence does not mean Box64, DXVK, Wine or Proton is packaged or used by the Android application. The product target is a native Android experience.
+# Configuration directory
+
+This directory contains legacy/reference configuration files. They are not evidence that a compatibility runtime is active or packaged. The current native Android application does not rely on these files for a complete Windows game runtime.
+
+The product target remains a native Android application. No Winlator-style desktop UI or Proton/FEXCore packaging path is part of the selected architecture.
