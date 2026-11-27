@@ -1,3 +1,13 @@
+# Android build configuration update (2026-11-27)
+
+The repository now builds **debug APKs only**. GitHub Actions runs `assembleDebug`, verifies the debug APK signature, and uploads the debug artifact. The workflow does not read release-signing secrets or generate release keystores. The Android Gradle configuration disables the release variant.
+
+The CI workflow caches its generated debug keystore with a fixed cache key so successive manually dispatched builds can normally keep the same signer. GitHub Actions caches are not permanent storage; eviction or deletion can change the signer. Pull-request builds are not guaranteed to share the persistent CI debug signer.
+
+See `android/README.md` for build and update behavior.
+
+---
+
 # Android Activity frame-loop update (2026-11-27)
 
 The regular Java `Activity` + `TextureView` path now starts a dedicated native frame-pump thread after a successful `graphics_init`. The thread calls `graphics_present()` at an approximately 60 Hz cadence, reports a five-second heartbeat, and is joined before graphics/window teardown. Surface recreation stops the old pump before releasing/reinitializing the window.
