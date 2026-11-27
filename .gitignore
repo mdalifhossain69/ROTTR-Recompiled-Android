@@ -13,3 +13,9 @@ generated/
 build/
 __pycache__/
 tools/remill-src/
+
+# Android build artifacts / local config
+android/.cxx/
+android/.gradle/
+android/local.properties
+android/gradlew.bat

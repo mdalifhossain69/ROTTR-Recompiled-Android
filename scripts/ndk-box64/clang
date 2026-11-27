@@ -1,0 +1,2 @@
+#!/data/data/com.termux/files/usr/bin/sh
+exec box64 /data/data/com.termux/files/usr/opt/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/clang "$@"

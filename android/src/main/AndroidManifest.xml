@@ -11,6 +11,8 @@
         android:required="true" />
 
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="33" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="33" />
 
     <application
         android:allowBackup="true"
@@ -18,7 +20,8 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.ROTTRRecomp"
         android:hasCode="true"
-        android:hardwareAccelerated="true">
+        android:hardwareAccelerated="true"
+        android:requestLegacyExternalStorage="true">
 
         <activity
             android:name=".MainActivity"

@@ -1,13 +1,19 @@
 package com.rottr.recomp;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.InputQueue;
+import android.content.pm.PackageManager;
 import android.graphics.SurfaceTexture;
 import android.os.Bundle;
+import android.os.Environment;
 import android.util.Log;
 import android.view.Surface;
 import android.view.View;
 import android.view.WindowManager;
+
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 /**
  * Main activity for ROTTR-Recomp.
@@ -15,15 +21,27 @@ import android.view.WindowManager;
  */
 public class MainActivity extends Activity implements SurfaceTextureListener {
     private static final String TAG = "ROTTR-Recomp-MainActivity";
-    
+
+    private static final int REQUEST_STORAGE_PERMISSION = 1001;
+    private static final String[] STORAGE_PERMISSIONS = {
+            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+    };
+
     private SurfaceTexture mSurfaceTexture;
     private Surface mSurface;
     private boolean mSurfaceValid = false;
-    
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
+
+        // ---- Auto-save logs to SDcard/ROTTR-logs when the app opens ----
+        LogUtils.init(this);
+
+        // Request storage permission (needed on Android 6+ to write to /sdcard)
+        requestStoragePermission();
+
         // Keep screen on for game
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         
@@ -43,7 +61,10 @@ public class MainActivity extends Activity implements SurfaceTextureListener {
         textureView.setSurfaceTextureListener(this);
         setContentView(textureView);
         
-        Log.i(TAG, "Activity created");
+        Log.i(TAG, "Activity created. Log dir: " +
+                (Environment.getExternalStorageDirectory() != null
+                        ? Environment.getExternalStorageDirectory().getAbsolutePath() + "/ROTTR-logs"
+                        : "unavailable"));
     }
     
     @Override
@@ -61,7 +82,7 @@ public class MainActivity extends Activity implements SurfaceTextureListener {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        Log.i(TAG, "onDestroy");
+        LogUtils.close();
         // Shutdown native subsystems
         NativeBridge.shutdown();
     }
@@ -113,5 +134,31 @@ public class MainActivity extends Activity implements SurfaceTextureListener {
     @Override
     public void onSurfaceTextureUpdated(SurfaceTexture surface) {
         // Called when the surface is updated - could trigger a render frame
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Storage permission                                               */
+    /* ---------------------------------------------------------------- */
+    private void requestStoragePermission() {
+        // Already granted
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED) {
+            LogUtils.i(TAG, "Storage permission already granted");
+            return;
+        }
+
+        ActivityCompat.requestPermissions(this, STORAGE_PERMISSIONS, REQUEST_STORAGE_PERMISSION);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           String[] permissions,
+                                           int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_STORAGE_PERMISSION) {
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            LogUtils.i(TAG, "Storage permission " + (granted ? "granted" : "denied"));
+        }
     }
 }
