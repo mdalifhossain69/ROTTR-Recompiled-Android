@@ -146,21 +146,9 @@ bool VulkanBackend::copyResource(uint64_t dst, uint64_t src) {
         vkCmdCopyBuffer(cmd, s->second.buffer, d->second.buffer, 1, &region);
         return endCommands(cmd);
     }
-    if (d->second.width != s->second.width || d->second.height != s->second.height ||
-        d->second.format != s->second.format || d->second.mipLevels != s->second.mipLevels ||
-        d->second.arraySize != s->second.arraySize) return false;
-    VkCommandBuffer cmd = VK_NULL_HANDLE; if (!beginCommands(cmd)) return false;
-    VkImageMemoryBarrier barriers[2]{};
-    for (auto& b : barriers) { b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER; b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; b.subresourceRange = {d->second.aspect, 0, d->second.mipLevels, 0, d->second.arraySize}; }
-    barriers[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barriers[0].image = d->second.image; barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barriers[1].image = s->second.image; barriers[1].srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
-    VkImageCopy region{}; region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, d->second.arraySize};
-    region.dstSubresource = region.srcSubresource; region.extent = {d->second.width, d->second.height, 1};
-    vkCmdCopyImage(cmd, s->second.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, d->second.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    return endCommands(cmd);
+    // Image copies require tracked source/destination layouts and per-mip/layer regions.
+    // Refuse this operation until the D3D11 resource-state tracker is integrated.
+    return false;
 }
 // Draw needs a translated shader pair, input layout, render pass and pipeline state.
 // Fail closed until that pipeline state is supplied; never report a fake successful draw.
