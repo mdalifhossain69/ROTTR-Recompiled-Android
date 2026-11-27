@@ -165,6 +165,55 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    private void showRuntimeInstaller() {
+        new AlertDialog.Builder(this).setTitle("Install Windows runtime")
+                .setMessage("Import the matching Winlator component packages. Proton and FEXCore are separate WCP files.")
+                .setItems(new String[] {"Proton 10 ARM64EC (.wcp)", "FEXCore ARM64EC bridge (.wcp)"},
+                        (dialog, which) -> chooseRuntimePackage(which == 0
+                                ? RuntimePackageInstaller.TYPE_PROTON
+                                : RuntimePackageInstaller.TYPE_FEXCORE))
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private void chooseRuntimePackage(String type) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, RuntimePackageInstaller.TYPE_PROTON.equals(type)
+                    ? REQUEST_PROTON_PACKAGE : REQUEST_FEXCORE_PACKAGE);
+        } catch (Throwable error) {
+            LogUtils.exception("open runtime package picker", error);
+            Toast.makeText(this, "Unable to open runtime package picker", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void installRuntimePackage(Uri source, String type) {
+        Toast.makeText(this, "Importing " + type + " package...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                RuntimePackageInstaller.InstallResult result =
+                        RuntimePackageInstaller.install(this, source, type);
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    Toast.makeText(this, result.type + " " + result.version + " imported",
+                            Toast.LENGTH_LONG).show();
+                    LogUtils.i(TAG, "Runtime component imported: " + result.type + " "
+                            + result.version + " at " + result.directory);
+                });
+            } catch (Exception error) {
+                LogUtils.exception("import " + type + " runtime package", error);
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    new AlertDialog.Builder(this).setTitle("Runtime import failed")
+                            .setMessage(error.getMessage() == null ? error.toString() : error.getMessage())
+                            .setPositiveButton("OK", null).show();
+                });
+            }
+        }, "ROTTR-runtime-import").start();
+    }
+
     private void checkStorage() {
         if (!LogUtils.isRootStorageAvailable()) {
             storagePromptShown = false;
