@@ -139,6 +139,51 @@ int main() {
         return 1;
     }
 
+
+    // Group-1 immediate arithmetic supports memory destinations and CMP no-writeback.
+    constexpr uint8_t immediateMemoryProgram[] = {
+        0x48,0xbb,0xd0,0x10,0,0,0,0,0,0,
+        0x48,0xb9,5,0,0,0,0,0,0,0,
+        0x48,0x89,0x0b,
+        0x48,0x83,0x03,0x03,
+        0x48,0x83,0x3b,0x08,
+        0x74,0x01,0xf4,0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(immediateMemoryProgram); ++i)
+        memory[i] = immediateMemoryProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 32);
+    uint64_t immediateMemoryValue = 0;
+    std::memcpy(&immediateMemoryValue, memory.data() + 0xd0,
+                sizeof(immediateMemoryValue));
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "memory immediate ADD/CMP must reach HLT") ||
+        !expect(immediateMemoryValue == 8,
+                "memory immediate ADD must write the updated value") ||
+        !expect((cpu.rflags & (1ULL << 6)) != 0,
+                "memory immediate CMP must set ZF without changing memory") ||
+        !expect(cpu.rip == 0x1024,
+                "memory immediate CMP must drive the following conditional branch")) {
+        return 1;
+    }
+
+    // An immediate operation must reject an out-of-range memory destination.
+    constexpr uint8_t outOfBoundsImmediateProgram[] = {
+        0x48,0xbb,0xfc,0x10,0,0,0,0,0,0,
+        0x48,0x83,0x03,0x01,
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(outOfBoundsImmediateProgram); ++i)
+        memory[i] = outOfBoundsImmediateProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 16);
+    if (!expect(result.reason == rottr::X64StopReason::InvalidMemory,
+                "out-of-bounds immediate memory operand must fault")) {
+        return 1;
+    }
+
     std::puts("OK");
     return 0;
 }
