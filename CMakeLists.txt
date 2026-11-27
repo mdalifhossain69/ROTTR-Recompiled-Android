@@ -11,6 +11,7 @@ add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/remill_intrinsics.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_stubs.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_runtime.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_interpreter.cpp
 )
 target_include_directories(rottr_core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
 target_compile_options(rottr_core PRIVATE -Wall -Wextra -Werror)
@@ -71,6 +72,11 @@ add_executable(test_runtime tests/test_runtime.cpp)
 target_link_libraries(test_runtime PRIVATE rottr_core)
 target_compile_options(test_runtime PRIVATE -Wall -Wextra -Werror)
 add_test(NAME runtime COMMAND test_runtime)
+
+add_executable(test_x64_interpreter tests/test_x64_interpreter.cpp)
+target_link_libraries(test_x64_interpreter PRIVATE rottr_core)
+target_compile_options(test_x64_interpreter PRIVATE -Wall -Wextra -Werror)
+add_test(NAME x64_interpreter COMMAND test_x64_interpreter)
 
 add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
 target_link_libraries(test_x64_runtime PRIVATE rottr_core)
