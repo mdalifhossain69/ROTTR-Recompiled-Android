@@ -29,6 +29,8 @@ import recon  # noqa: E402
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 PAGE = 0x1000
 DATA_BASE, STACK_BASE, REGION_SIZE = 0x10000000, 0x20000000, 0x10000
+# Windows x64 enters a function with RSP 8 bytes below a 16-byte boundary.
+ENTRY_RSP_OFFSET = 0x7FF8
 RET_ADDR = 0x7FFF0000
 MEMORY_ERRORS = {UC_ERR_READ_UNMAPPED, UC_ERR_WRITE_UNMAPPED, UC_ERR_FETCH_UNMAPPED,
                  UC_ERR_WRITE_PROT, UC_ERR_READ_PROT, UC_ERR_FETCH_PROT}
@@ -123,7 +125,7 @@ class Reference:
         self.uc.mem_map(RET_ADDR, PAGE, UC_PROT_READ | UC_PROT_EXEC)
         self.uc.mem_write(RET_ADDR, b"\xCC")
 
-    def run(self, rva, regs, flags, xmm, data, stack):
+    def run(self, rva, regs, flags, xmm, data, stack, until=RET_ADDR):
         uc = self.uc
         uc.mem_write(DATA_BASE, data)
         uc.mem_write(STACK_BASE, stack)
@@ -136,11 +138,11 @@ class Reference:
         for reg, value in zip(XMM_REGS, xmm):
             uc.reg_write(reg, int.from_bytes(value, "little"))
         try:
-            uc.emu_start(rva, RET_ADDR, timeout=500_000, count=200_000)
+            uc.emu_start(rva, until, timeout=500_000, count=200_000)
         except UcError as error:
             kind = "memfault" if error.errno in MEMORY_ERRORS else "emulator-error"
             return kind, None
-        if uc.reg_read(X.UC_X86_REG_RIP) != RET_ADDR:
+        if uc.reg_read(X.UC_X86_REG_RIP) != until:
             return "timeout", None
         final_flags = uc.reg_read(X.UC_X86_REG_EFLAGS)
         return "ok", {
@@ -163,6 +165,7 @@ class Lifted:
         self.lib.harness_add_region.argtypes = [ctypes.c_uint64, ctypes.c_uint64,
                                                 ctypes.c_void_p, ctypes.c_int]
         self.lib.harness_run.restype = ctypes.c_int
+        self.lib.harness_fault_address.restype = ctypes.c_uint64
         self.image = (ctypes.c_uint8 * len(image)).from_buffer(image)
         self.image_len = len(image)
 
@@ -213,18 +216,41 @@ def differences(ref, lif):
     return found
 
 
+def random_memory(rng):
+    """Random bytes, or a mix with pointers so that pointer-following code can run."""
+    if rng.random() < 0.25:
+        return rng.randbytes(REGION_SIZE)
+    words = []
+    for _ in range(REGION_SIZE // 8):
+        k = rng.randrange(8)
+        if k < 4:  # 16-byte aligned pointer into the data region
+            words.append(DATA_BASE + 0x1000 + 16 * rng.randrange(0xE00))
+        elif k < 6:
+            words.append(rng.randrange(8))
+        else:
+            words.append(rng.getrandbits(64))
+    return struct.pack(f"<{len(words)}Q", *words)
+
+
 def random_inputs(rng):
     regs = [random_register(rng) for _ in range(16)]
-    regs[6] = STACK_BASE + 0x8000
+    regs[6] = STACK_BASE + ENTRY_RSP_OFFSET
     flags = [rng.getrandbits(1) for _ in range(5)] + [0, rng.getrandbits(1)]
     xmm = [random_xmm(rng) for _ in range(16)]
-    mem = rng.randbytes(REGION_SIZE)
+    if rng.random() < 0.5:  # aligned pointer arguments, as compiled code usually passes
+        for i in (2, 3, 8, 9):  # rcx, rdx, r8, r9
+            regs[i] = DATA_BASE + 0x4000 + 16 * rng.randrange(0x800)
+    mem = random_memory(rng)
     stack = bytearray(rng.randbytes(REGION_SIZE))
-    stack[0x8000:0x8008] = struct.pack("<Q", RET_ADDR)
+    stack[ENTRY_RSP_OFFSET:ENTRY_RSP_OFFSET + 8] = struct.pack("<Q", RET_ADDR)
     return regs, flags, xmm, mem, bytes(stack)
 
 
-def judge(kind, ref, rc, lif, events):
+def is_canonical(address):
+    return address >> 47 in (0, 0x1FFFF)
+
+
+def judge(kind, ref, rc, lif, events, target=RET_ADDR):
     """Classify one run. Returns (outcome, description of a difference)."""
     if kind in ("timeout", "emulator-error") or events.escaped or events.unsupported:
         return "skipped", ""
@@ -235,7 +261,7 @@ def judge(kind, ref, rc, lif, events):
     if kind == "memfault" or rc == RUN_FAULT:
         return "differ", f"memory fault on only one side (original {kind}, lifted code {rc})"
     diff = differences(ref, lif)
-    if not events.returned or events.return_pc != RET_ADDR:
+    if not events.returned or events.return_pc != target:
         diff.insert(0, f"lifted code did not return to the caller (target {events.return_pc:#x})")
     if not diff:
         return "match", ""
@@ -286,12 +312,34 @@ def main(argv=None):
                   "skipped: calls functions that were not lifted")
             continue
         counts = {"match": 0, "differ": 0, "both-fault": 0, "skipped": 0}
-        examples, flags_ignored, wrote = [], 0, 0
+        examples, flags_ignored, wrote, non_canonical = [], 0, 0, 0
         for _ in range(args.inputs):
             regs, flags, xmm, mem, stack = random_inputs(rng)
             kind, ref = reference.run(rva, regs, flags, xmm, mem, stack)
+            if kind == "timeout":  # no reference result, and the lifted run could be slow too
+                counts["skipped"] += 1
+                continue
             rc, lif, events = lifted.run(rva, regs, flags, xmm, mem, stack)
-            outcome, detail = judge(kind, ref, rc, lif, events)
+            target = RET_ADDR
+            if rc == RUN_OK and events.returned and not is_canonical(events.return_pc):
+                non_canonical += 1  # as below: a real CPU faults on this `ret`
+                counts["skipped"] += 1
+                continue
+            if rc == RUN_OK and events.returned and events.return_pc != RET_ADDR:
+                # The function overwrote its return address. Run the original again,
+                # stopping where the lifted code returned to, and compare as usual.
+                target = events.return_pc
+                kind, ref = reference.run(rva, regs, flags, xmm, mem, stack, until=target)
+            fault = lifted.lib.harness_fault_address() if rc == RUN_FAULT else 0
+            if rc == RUN_FAULT and not is_canonical(fault):
+                # A real CPU faults here, but Unicorn without paging drops the upper
+                # address bits and carries on, so there is no usable reference.
+                non_canonical += 1
+                counts["skipped"] += 1
+                continue
+            outcome, detail = judge(kind, ref, rc, lif, events, target)
+            if outcome == "differ" and rc == RUN_FAULT:
+                detail += f"; lifted code faulted at {fault:#x}"
             if outcome == "match-ignoring-flags":
                 flags_ignored += 1
                 outcome = "match"
@@ -309,6 +357,8 @@ def main(argv=None):
             notes.append(f"calls {len(graph[name])}")
         if flags_ignored:
             notes.append(f"{flags_ignored} runs: undefined flags not compared")
+        if non_canonical:
+            notes.append(f"{non_canonical} runs: non-canonical address, no reference")
         if counts["differ"] == 0 and compared < args.min_compared:
             notes.append("not verified: too few compared runs")
         print(f"{rva:#10x} {compared:8d} {counts['match']:6d} {counts['differ']:6d} "

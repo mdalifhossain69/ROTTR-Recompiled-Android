@@ -28,8 +28,16 @@ enum { RUN_OK = 0, RUN_FAULT = 1, RUN_TIMEOUT = 2 };
 static sigjmp_buf run_exit;
 static rottr_memory memory;
 
-static void on_memory_fault(uint64_t, size_t, int) { siglongjmp(run_exit, RUN_FAULT); }
+static uint64_t fault_address;
+
+static void on_memory_fault(uint64_t address, size_t, int) {
+    fault_address = address;
+    siglongjmp(run_exit, RUN_FAULT);
+}
 static void on_timeout(int) { siglongjmp(run_exit, RUN_TIMEOUT); }
+
+// Guest address of the access that ended the last run with RUN_FAULT.
+extern "C" uint64_t harness_fault_address() { return fault_address; }
 
 extern "C" void harness_clear_regions() { rottr_memory_reset(&memory); }
 
