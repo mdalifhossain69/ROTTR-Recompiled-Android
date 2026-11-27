@@ -33,7 +33,9 @@ if(ANDROID)
     set_target_properties(rottr_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     add_library(rottr_android SHARED ${CMAKE_CURRENT_LIST_DIR}/runtime/src/android_main.cpp
-                                       ${CMAKE_CURRENT_LIST_DIR}/runtime/src/jni_bridge.cpp)
+                                       ${CMAKE_CURRENT_LIST_DIR}/runtime/src/jni_bridge.cpp
+                                       ${CMAKE_CURRENT_LIST_DIR}/runtime/src/vk/vulkan_renderer.cpp)
+    target_include_directories(rottr_android PRIVATE ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
     target_link_libraries(rottr_android PRIVATE rottr_runtime android log OpenSLES vulkan aaudio)
     target_compile_options(rottr_android PRIVATE -Wall -Wextra -Werror)
     set_target_properties(rottr_android PROPERTIES

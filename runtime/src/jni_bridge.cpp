@@ -1,259 +1,118 @@
-// jni_bridge.cpp
-// JNI exports for com.rottr.recomp.NativeBridge.
-// Provides the nativeInit / nativeSetSurface / ... entry points called from the
-// Java/Kotlin side of the ROTTR-Recomp launcher Activity.
-//
-// This mirrors the subsystem initialization performed in android_main.cpp
-// (NativeActivity path) so that a regular Activity + TextureView launcher works.
+// JNI exports for com.rottr.recomp.NativeBridge: owns the Vulkan render thread for the
+// Surface supplied by the boot screen. All entry points are called on the UI thread.
 
 #include <jni.h>
+#include <android/log.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
-#include <android/log.h>
-#include <cstdint>
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_android.h>
+
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <thread>
 
-#define LOG_TAG "ROTTR-Recomp-JNI"
+#include "rottr/vulkan_renderer.h"
+
+#define LOG_TAG "ROTTR-Vulkan"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// Subsystem declarations (implemented across runtime/src)
-extern "C" bool graphics_init(int width, int height, void* window);
-extern "C" void graphics_shutdown(void);
-extern "C" void graphics_set_target_fps(unsigned int fps);
-extern "C" void graphics_set_frame_pacing(bool enable);
-extern "C" bool graphics_present(void);
+namespace {
 
-extern "C" bool audio_init(unsigned int sampleRate, int channels, int format);
-extern "C" void audio_shutdown(void);
-
-extern "C" bool input_init(void);
-extern "C" void input_shutdown(void);
-extern "C" void input_set_input_queue(void* queue);
-
-extern "C" bool video_init(unsigned int width, unsigned int height);
-extern "C" void video_shutdown(void);
-extern "C" void video_set_native_window(void* window);
-
-extern "C" void touch_controls_init(int width, int height);
-extern "C" void touch_controls_update_gamepad_c(void* gamepad);
-
-extern "C" void perf_init(void);
-extern "C" void perf_shutdown(void);
-
-// Audio channel / format constants must match audio_types.h
-static const int AUDIO_CHANNEL_STEREO = 0;
-static const int AUDIO_FORMAT_FLOAT = 0;
-
-static struct {
-    bool coreInitialized = false;
-    bool windowInitialized = false;
-    ANativeWindow* window = nullptr;
-    int32_t screenWidth = 0;
-    int32_t screenHeight = 0;
-    std::atomic<bool> framePumpRunning{false};
-    std::thread framePump;
-    std::atomic<uint64_t> presentedFrames{0};
-} g_state;
-
-static void initialize_core(int width, int height) {
-    if (g_state.coreInitialized) {
-        return;
-    }
-    g_state.screenWidth = width;
-    g_state.screenHeight = height;
-
-    LOGI("JNI: initializing core subsystems %dx%d", width, height);
-
-    if (!audio_init(48000, AUDIO_CHANNEL_STEREO, AUDIO_FORMAT_FLOAT)) {
-        LOGE("JNI: audio_init failed (non-fatal)");
-    }
-    if (!input_init()) {
-        LOGE("JNI: input_init failed");
-    }
-    touch_controls_init(width, height);
-    perf_init();
-
-    g_state.coreInitialized = true;
+// These lines reach the ROTTR-logs file through the app's logcat capture.
+void log_line(bool isError, const char* message) {
+    __android_log_write(isError ? ANDROID_LOG_ERROR : ANDROID_LOG_INFO, LOG_TAG, message);
 }
 
-static void stop_frame_pump(void) {
-    g_state.framePumpRunning.store(false, std::memory_order_release);
-    if (g_state.framePump.joinable()) {
-        g_state.framePump.join();
-    }
-}
+ANativeWindow* g_window = nullptr;
+std::unique_ptr<rottr::VulkanRenderer> g_renderer;
+std::thread g_thread;
+std::atomic<bool> g_running{false};
+int g_stagesDone = 1;
 
-static void start_frame_pump(void) {
-    if (g_state.framePumpRunning.exchange(true, std::memory_order_acq_rel)) {
-        return;
-    }
-    g_state.presentedFrames.store(0, std::memory_order_relaxed);
-    g_state.framePump = std::thread([]() {
-        using clock = std::chrono::steady_clock;
-        auto nextFrame = clock::now();
-        auto lastReport = nextFrame;
-        uint64_t lastReportedFrames = 0;
-        LOGI("JNI: native frame-pump thread started");
-        while (g_state.framePumpRunning.load(std::memory_order_acquire)) {
-            nextFrame += std::chrono::milliseconds(16);
-            const bool presented = graphics_present();
-            if (presented) {
-                g_state.presentedFrames.fetch_add(1, std::memory_order_relaxed);
-            }
-            const auto now = clock::now();
-            if (now - lastReport >= std::chrono::seconds(5)) {
-                const uint64_t total = g_state.presentedFrames.load(std::memory_order_relaxed);
-                LOGI("JNI: frame-pump heartbeat; present_calls=%llu, interval_calls=%llu",
-                     static_cast<unsigned long long>(total),
-                     static_cast<unsigned long long>(total - lastReportedFrames));
-                lastReportedFrames = total;
-                lastReport = now;
-            }
-            if (nextFrame < now - std::chrono::milliseconds(100)) {
-                nextFrame = now;
-            }
-            std::this_thread::sleep_until(nextFrame);
+void render_loop(rottr::VulkanRenderer* renderer) {
+    using clock = std::chrono::steady_clock;
+    const auto start = clock::now();
+    auto lastReport = start;
+    while (g_running.load()) {
+        const auto now = clock::now();
+        if (!renderer->drawFrame(std::chrono::duration<float>(now - start).count())) {
+            LOGE("rendering stopped after an unrecoverable Vulkan error");
+            break;
         }
-        LOGI("JNI: native frame-pump thread stopped");
-    });
-}
-
-static void shutdown_window(void) {
-    stop_frame_pump();
-    if (!g_state.windowInitialized) {
-        return;
-    }
-    graphics_shutdown();
-    video_shutdown();
-    g_state.windowInitialized = false;
-}
-
-static void initialize_window(int width, int height, ANativeWindow* window) {
-    if (window == nullptr) {
-        return;
-    }
-    if (g_state.windowInitialized && g_state.window == window) {
-        return;
-    }
-
-    shutdown_window();
-    if (g_state.window != nullptr) {
-        ANativeWindow_release(g_state.window);
-        g_state.window = nullptr;
-    }
-
-    g_state.window = window;
-    g_state.screenWidth = width;
-    g_state.screenHeight = height;
-
-    LOGI("JNI: initializing window subsystems %dx%d", width, height);
-    LOGI("JNI: ANativeWindow format=%d", ANativeWindow_getFormat(window));
-
-    const bool videoOk = video_init(static_cast<unsigned int>(width), static_cast<unsigned int>(height));
-    LOGI("JNI: video_init returned %s", videoOk ? "true" : "false");
-    video_set_native_window(window);
-    const bool graphicsOk = graphics_init(width, height, window);
-    LOGI("JNI: graphics_init returned %s", graphicsOk ? "true" : "false");
-    if (!graphicsOk) {
-        LOGE("JNI: graphics_init failed; rendering cannot start");
-    }
-
-    g_state.windowInitialized = true; // Track attempted initialization so partial failures are cleaned up.
-    if (graphicsOk) {
-        start_frame_pump();
+        if (now - lastReport >= std::chrono::seconds(5)) {
+            LOGI("frames presented: %llu", static_cast<unsigned long long>(renderer->presentedFrames()));
+            lastReport = now;
+        }
     }
 }
 
-static void release_window(void) {
-    shutdown_window();
-    if (g_state.window != nullptr) {
-        ANativeWindow_release(g_state.window);
-        g_state.window = nullptr;
+void stop_rendering() {
+    g_running.store(false);
+    if (g_thread.joinable()) g_thread.join();
+    g_renderer.reset();  // destroys Vulkan objects before the window is released
+    if (g_window != nullptr) {
+        ANativeWindow_release(g_window);
+        g_window = nullptr;
     }
 }
+
+bool start_rendering(ANativeWindow* window) {
+    g_window = window;  // takes over the caller's reference
+    auto renderer = std::make_unique<rottr::VulkanRenderer>(log_line);
+    const auto createSurface = [window](VkInstance instance, VkSurfaceKHR* surface) {
+        VkAndroidSurfaceCreateInfoKHR info{};
+        info.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+        info.window = window;
+        return vkCreateAndroidSurfaceKHR(instance, &info, nullptr, surface);
+    };
+    if (!renderer->init(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, createSurface,
+                        static_cast<uint32_t>(ANativeWindow_getWidth(window)),
+                        static_cast<uint32_t>(ANativeWindow_getHeight(window)))) {
+        stop_rendering();
+        return false;
+    }
+    renderer->setStagesDone(g_stagesDone);
+    g_renderer = std::move(renderer);
+    g_running.store(true);
+    g_thread = std::thread(render_loop, g_renderer.get());
+    return true;
+}
+
+}  // namespace
 
 extern "C" {
 
-/*
- * Class:     com_rottr_recomp_NativeBridge
- * Method:    nativeInit
- * Signature: (II)V
- */
-JNIEXPORT void JNICALL
-Java_com_rottr_recomp_NativeBridge_nativeInit(JNIEnv* env, jclass clazz, jint width, jint height) {
-    (void)env;
-    (void)clazz;
-    LOGI("JNI: nativeInit %dx%d", (int)width, (int)height);
-    initialize_core((int)width, (int)height);
-}
-
-/*
- * Class:     com_rottr_recomp_NativeBridge
- * Method:    nativeSetSurface
- * Signature: (Landroid/view/Surface;)V
- */
-JNIEXPORT void JNICALL
-Java_com_rottr_recomp_NativeBridge_nativeSetSurface(JNIEnv* env, jclass clazz, jobject surface) {
-    (void)clazz;
-    ANativeWindow* window = nullptr;
-    if (surface != nullptr) {
-        window = ANativeWindow_fromSurface(env, surface);
-        if (window == nullptr) {
-            LOGE("JNI: ANativeWindow_fromSurface returned null");
-        }
+JNIEXPORT jboolean JNICALL
+Java_com_rottr_recomp_NativeBridge_nativeSetSurface(JNIEnv* env, jclass, jobject surface) {
+    if (surface == nullptr) {
+        stop_rendering();
+        return JNI_FALSE;
     }
-    LOGI("JNI: nativeSetSurface window=%p", (void*)window);
-    initialize_core(g_state.screenWidth, g_state.screenHeight);
-    initialize_window(g_state.screenWidth, g_state.screenHeight, window);
+    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
+    if (window == nullptr) {
+        LOGE("ANativeWindow_fromSurface returned null");
+        return JNI_FALSE;
+    }
+    if (window == g_window && g_renderer != nullptr) {
+        ANativeWindow_release(window);  // already rendering to it; size changes are handled there
+        return JNI_TRUE;
+    }
+    stop_rendering();
+    return start_rendering(window) ? JNI_TRUE : JNI_FALSE;
 }
 
-/*
- * Class:     com_rottr_recomp_NativeBridge
- * Method:    nativeReleaseSurface
- * Signature: ()V
- */
 JNIEXPORT void JNICALL
-Java_com_rottr_recomp_NativeBridge_nativeReleaseSurface(JNIEnv* env, jclass clazz) {
-    (void)env;
-    (void)clazz;
-    LOGI("JNI: nativeReleaseSurface");
-    release_window();
+Java_com_rottr_recomp_NativeBridge_nativeReleaseSurface(JNIEnv*, jclass) {
+    stop_rendering();
 }
 
-/*
- * Class:     com_rottr_recomp_NativeBridge
- * Method:    nativeSetInputQueue
- * Signature: (Landroid/view/InputQueue;)V
- */
 JNIEXPORT void JNICALL
-Java_com_rottr_recomp_NativeBridge_nativeSetInputQueue(JNIEnv* env, jclass clazz, jobject inputQueue) {
-    (void)env;
-    (void)clazz;
-    // AInputQueue from a regular Activity needs the NativeActivity glue path;
-    // keep the input subsystem in its self-polling mode for now.
-    LOGI("JNI: nativeSetInputQueue queue=%p", (void*)inputQueue);
-    input_set_input_queue(nullptr);
+Java_com_rottr_recomp_NativeBridge_nativeSetStagesDone(JNIEnv*, jclass, jint count) {
+    g_stagesDone = count;
+    if (g_renderer != nullptr) g_renderer->setStagesDone(count);
 }
 
-/*
- * Class:     com_rottr_recomp_NativeBridge
- * Method:    nativeShutdown
- * Signature: ()V
- */
-JNIEXPORT void JNICALL
-Java_com_rottr_recomp_NativeBridge_nativeShutdown(JNIEnv* env, jclass clazz) {
-    (void)env;
-    (void)clazz;
-    LOGI("JNI: nativeShutdown");
-    release_window();
-    touch_controls_update_gamepad_c(nullptr);
-    perf_shutdown();
-    input_shutdown();
-    audio_shutdown();
-    g_state.coreInitialized = false;
-}
-
-} // extern "C"
+}  // extern "C"

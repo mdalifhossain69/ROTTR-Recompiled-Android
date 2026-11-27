@@ -13,17 +13,15 @@ import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
-/** Main Activity hosts the first-run launcher and native render surface lifecycle. */
-public class MainActivity extends Activity implements android.view.TextureView.SurfaceTextureListener {
+/** Hosts the launcher and the boot screen. */
+public class MainActivity extends Activity {
     private static final String TAG = "ROTTR-MainActivity";
     private static final int REQUEST_GAME_FOLDER = 4101;
     private static final String PREFS = "rottr_launcher";
     private Uri gameFolder;
     private LauncherScreen launcher;
-    private android.view.TextureView textureView;
-    private android.view.Surface surface;
     private boolean storagePromptShown;
-    private boolean runtimeSurfaceVisible;
+    private boolean bootScreenVisible;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -56,7 +54,7 @@ public class MainActivity extends Activity implements android.view.TextureView.S
     }
 
     private void showLauncher() {
-        runtimeSurfaceVisible = false;
+        bootScreenVisible = false;
         launcher = new LauncherScreen(this, new LauncherScreen.Listener() {
             @Override public void onChooseGameFolder() { chooseGameFolder(); }
             @Override public void onPlay() { onPlayPressed(); }
@@ -106,12 +104,22 @@ public class MainActivity extends Activity implements android.view.TextureView.S
                     .setNegativeButton("Cancel", null).show();
             return;
         }
-        // Folder selection is persisted. The current native runtime does not yet expose
-        // a game-data mount/boot JNI entry point, so do not switch to a blank render view.
-        new AlertDialog.Builder(this).setTitle("Game folder saved")
-                .setMessage("Your game folder is selected. The native game-data mounting and boot sequence is still being integrated; PLAY will be connected when that runtime path is ready.")
-                .setPositiveButton("OK", null).show();
-        LogUtils.i(TAG, "PLAY pressed; game folder selected, guest boot integration pending");
+        showBootScreen();
+    }
+
+    private void showBootScreen() {
+        BootScreen boot = new BootScreen(this, this::showLauncher);
+        bootScreenVisible = true;
+        launcher = null;
+        NativeBridge.setStagesDone(1);
+        setContentView(boot);
+        boot.addLine("Game launch is not available yet: translating and running the game's code, "
+                + "and its Windows and DirectX functions, are not implemented.");
+    }
+
+    @Override public void onBackPressed() {
+        if (bootScreenVisible) showLauncher();
+        else super.onBackPressed();
     }
 
     private void showAppSettings() {
@@ -186,32 +194,8 @@ public class MainActivity extends Activity implements android.view.TextureView.S
 
     @Override protected void onDestroy() {
         LogUtils.i(TAG, "onDestroy");
-        try { NativeBridge.shutdown(); } catch (Throwable error) { LogUtils.exception("NativeBridge.shutdown", error); }
-        if (surface != null) { surface.release(); surface = null; }
+        try { NativeBridge.releaseSurface(); } catch (Throwable error) { LogUtils.exception("NativeBridge.releaseSurface", error); }
         LogUtils.close();
         super.onDestroy();
     }
-
-    @Override public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture texture, int width, int height) {
-        LogUtils.i(TAG, "Runtime surface available: " + width + "x" + height);
-        try {
-            surface = new android.view.Surface(texture);
-            if (NativeBridge.isNativeAvailable()) {
-                NativeBridge.init(width, height);
-                NativeBridge.setSurface(surface);
-            } else LogUtils.e(TAG, "Native library unavailable");
-        } catch (Throwable error) { LogUtils.exception("runtime surface initialization", error); }
-    }
-    @Override public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture texture, int width, int height) {
-        LogUtils.i(TAG, "Runtime surface resized: " + width + "x" + height);
-        try { if (NativeBridge.isNativeAvailable()) NativeBridge.init(width, height); }
-        catch (Throwable error) { LogUtils.exception("runtime surface resize", error); }
-    }
-    @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture texture) {
-        LogUtils.i(TAG, "Runtime surface destroyed");
-        try { NativeBridge.releaseSurface(); } catch (Throwable error) { LogUtils.exception("surface release", error); }
-        if (surface != null) { surface.release(); surface = null; }
-        return true;
-    }
-    @Override public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture texture) {}
 }
