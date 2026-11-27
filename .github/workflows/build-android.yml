@@ -68,13 +68,6 @@ jobs:
           export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.0.12077973
           ./gradlew assembleDebug -PVERSION_CODE=${{ github.run_number }}
 
-      - name: Save persistent CI debug signing key
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: rottr-ci-debug-keystore-v1
-
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
