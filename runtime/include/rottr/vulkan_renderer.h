@@ -35,6 +35,12 @@ public:
     void setStagesDone(int count) { stagesDone_.store(count); }
     uint64_t presentedFrames() const { return presented_; }
 
+    // Borrowed handles; valid only after init() and until destroy().
+    VkPhysicalDevice physicalDevice() const { return physical_; }
+    VkDevice logicalDevice() const { return device_; }
+    VkQueue graphicsQueue() const { return queue_; }
+    uint32_t graphicsQueueFamily() const { return queueFamily_; }
+
 private:
     bool pickDevice();
     bool createDevice();

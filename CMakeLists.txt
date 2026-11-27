@@ -5,21 +5,24 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Portable part: guest state, Remill runtime helpers, Win32 stubs.
+# Portable part: guest state, Remill helpers, Win32 stubs and runtime probes.
 add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/guest.c
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/remill_intrinsics.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_stubs.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_runtime.cpp
 )
 target_include_directories(rottr_core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
 target_compile_options(rottr_core PRIVATE -Wall -Wextra -Werror)
 set_target_properties(rottr_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Graphics, audio, input, video and the entry point use Android APIs, so they are
-# built only for Android. Work on them is paused: see docs/NEXT_STEPS.md.
 if(ANDROID)
     add_library(rottr_runtime STATIC
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/graphics.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/dxgi_vk_format.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/dxbc_shader.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/d3d11_device.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/vulkan_backend.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/audio/audio.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/input/input.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/input/touch_controls.cpp
@@ -29,6 +32,16 @@ if(ANDROID)
     target_include_directories(rottr_runtime PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/runtime/include ${CMAKE_CURRENT_LIST_DIR}/runtime/src)
     target_link_libraries(rottr_runtime PUBLIC rottr_core)
+
+    # vkd3d-shader is the DXBC -> SPIR-V compiler. Keep the build usable for
+    # developers without the optional library, but never fake successful translation.
+    find_path(VKD3D_SHADER_INCLUDE_DIR vkd3d_shader.h)
+    find_library(VKD3D_SHADER_LIBRARY NAMES vkd3d-shader vkd3d_shader)
+    if(VKD3D_SHADER_INCLUDE_DIR AND VKD3D_SHADER_LIBRARY)
+        target_include_directories(rottr_runtime PRIVATE ${VKD3D_SHADER_INCLUDE_DIR})
+        target_link_libraries(rottr_runtime PRIVATE ${VKD3D_SHADER_LIBRARY})
+        target_compile_definitions(rottr_runtime PRIVATE ROTTR_HAS_VKD3D_SHADER=1)
+    endif()
     target_compile_options(rottr_runtime PRIVATE -Wall -Wextra -Werror)
     set_target_properties(rottr_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -39,9 +52,7 @@ if(ANDROID)
     target_include_directories(rottr_android PRIVATE ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
     target_link_libraries(rottr_android PRIVATE rottr_runtime android log OpenSLES vulkan aaudio)
     target_compile_options(rottr_android PRIVATE -Wall -Wextra -Werror)
-    set_target_properties(rottr_android PROPERTIES
-        ANDROID_SO_UNDEFINED OFF
-    )
+    set_target_properties(rottr_android PROPERTIES ANDROID_SO_UNDEFINED OFF)
     return()
 endif()
 
@@ -61,7 +72,26 @@ target_link_libraries(test_runtime PRIVATE rottr_core)
 target_compile_options(test_runtime PRIVATE -Wall -Wextra -Werror)
 add_test(NAME runtime COMMAND test_runtime)
 
-# The Vulkan renderer also runs on a desktop headless surface (e.g. Mesa lavapipe).
+add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
+target_link_libraries(test_x64_runtime PRIVATE rottr_core)
+target_compile_options(test_x64_runtime PRIVATE -Wall -Wextra -Werror)
+add_test(NAME x64_runtime COMMAND test_x64_runtime)
+
+add_executable(test_dxgi_vk_format tests/test_dxgi_vk_format.cpp runtime/src/graphics/dxgi_vk_format.cpp)
+target_include_directories(test_dxgi_vk_format PRIVATE runtime/src)
+target_compile_options(test_dxgi_vk_format PRIVATE -Wall -Wextra -Werror)
+add_test(NAME dxgi_vk_format COMMAND test_dxgi_vk_format)
+
+add_executable(test_dxbc_shader tests/test_dxbc_shader.cpp runtime/src/graphics/dxbc_shader.cpp)
+target_include_directories(test_dxbc_shader PRIVATE runtime/src)
+target_compile_options(test_dxbc_shader PRIVATE -Wall -Wextra -Werror)
+add_test(NAME dxbc_shader COMMAND test_dxbc_shader)
+
+add_executable(test_d3d11_device tests/test_d3d11_device.cpp runtime/src/graphics/d3d11_device.cpp runtime/src/graphics/dxgi_vk_format.cpp)
+target_include_directories(test_d3d11_device PRIVATE runtime/src)
+target_compile_options(test_d3d11_device PRIVATE -Wall -Wextra -Werror)
+add_test(NAME d3d11_device COMMAND test_d3d11_device)
+
 find_package(Vulkan)
 if(Vulkan_FOUND)
   add_executable(test_vulkan tests/test_vulkan.cpp runtime/src/vk/vulkan_renderer.cpp)
@@ -78,6 +108,5 @@ if(Python3_FOUND)
   foreach(name recon functions harness lifted)
     add_test(NAME ${name} COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_${name}.py)
   endforeach()
-  # unittest exits with 0 when it skips; report that as skipped, not passed.
   set_tests_properties(harness lifted PROPERTIES SKIP_REGULAR_EXPRESSION "OK \\(skipped=")
 endif()

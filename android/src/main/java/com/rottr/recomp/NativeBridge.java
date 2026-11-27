@@ -25,6 +25,11 @@ public final class NativeBridge {
 
     public static boolean isNativeAvailable() { return sNativeAvailable; }
 
+    /** Reports the actual host/guest CPU backend state; does not start a game. */
+    public static String x64RuntimeStatus() {
+        return sNativeAvailable ? nativeX64RuntimeStatus() : "Native library unavailable\\n";
+    }
+
     /** Starts Vulkan rendering on the surface. Returns false if Vulkan could not start. */
     public static boolean setSurface(Surface surface) {
         return sNativeAvailable && nativeSetSurface(surface);
@@ -49,6 +54,7 @@ public final class NativeBridge {
     }
 
     private static native String nativeInspectExe(int fd);
+    private static native String nativeX64RuntimeStatus();
     private static native boolean nativeSetSurface(Surface surface);
     private static native void nativeReleaseSurface();
     private static native void nativeSetStagesDone(int count);

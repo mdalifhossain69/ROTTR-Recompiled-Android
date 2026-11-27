@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "rottr/pe_inspect.h"
+#include "rottr/x64_runtime.h"
 #include "rottr/vulkan_renderer.h"
 
 #define LOG_TAG "ROTTR-Vulkan"
@@ -114,6 +115,13 @@ std::string inspect_fd(int fd, bool& passed) {
 }  // namespace
 
 extern "C" {
+
+JNIEXPORT jstring JNICALL
+Java_com_rottr_recomp_NativeBridge_nativeX64RuntimeStatus(JNIEnv* env, jclass) {
+    const std::string status = rottr::describeWindowsX64ExecutionBackend();
+    return env->NewStringUTF(status.c_str());
+}
+
 
 // Returns "1\n<report>" if the check passed, otherwise "0\n<report>". Report text is ASCII.
 JNIEXPORT jstring JNICALL
