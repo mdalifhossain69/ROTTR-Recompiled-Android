@@ -1,3 +1,18 @@
+# Windows x86-64 execution backend foundation (2026-11-27)
+
+The Android native library now reports the CPU execution state separately from the PE header check and Vulkan surface state. On the current APK it reports Android ARM64 as the host, Windows x86-64 as the executable architecture, and **x86-64 backend NOT LINKED**. A successful PE32+ check is only file identification; it is not execution.
+
+This first step intentionally does not add a fake FEXCore stub or claim that a Vulkan clear renderer can boot ROTTR. FEX's own FAQ says the full FEX Linux user-mode runtime is not an Android target; FEXCore can be built as a library for Android but is not a complete Windows process environment. Box64 likewise needs a compatible Linux userspace and Wine/Proton. The existing Winlator device notes show a practical reference configuration (Proton arm64ec + FEXCore + DXVK), but those components are not currently embedded in this APK.
+
+## Next implementation steps
+
+1. Select and package a supported Android Windows runtime stack (ARM64EC/Wine + its x64 CPU bridge, or Box64 + glibc userspace + Wine64). Verify licensing, ABI compatibility, process launch, and Vulkan handle/surface sharing before wiring it into PLAY.
+2. Implement the Windows loader and required imported APIs for the ROTTR executable, preserving Steam/EOS ownership checks.
+3. Route Direct3D 11 through DXVK to the Android Vulkan device; validate a real rendered frame from the game before claiming native Vulkan gameplay.
+4. Add SAF game-folder mounting, executable launch arguments, logs, process lifecycle, audio and input forwarding.
+
+**Current result:** capability diagnostics and a test exist; actual x86-64 instruction execution is still not implemented, and ROTTR does not boot yet.
+
 # ROTTR Android launcher UI (2026-11-27)
 
 The app's first screen is now a landscape ROTTR launcher instead of the blank full-screen TextureView. It includes a custom snowy mountain backdrop, translucent settings panel, graphics preset, resolution scaling, texture quality, shadow and ambient-occlusion controls, Android Storage Access Framework folder picker with persisted URI permission, and a prominent PLAY action. Launcher selections are stored in SharedPreferences. The first-run screen no longer immediately interrupts the user with the all-files-access permission dialog; diagnostics use app-private storage unless public log access is already granted.
