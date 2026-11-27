@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [debug]
+        variant: [release]
 
     steps:
       - name: Checkout repository
