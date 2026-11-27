@@ -1,2 +1,1 @@
-# Config
-Per-build settings (executable hash, function lists) will go here after phase 1.
+This directory contains legacy/reference configuration files. They are not consumed by the native Android launcher or current D3D11-to-Vulkan backend unless an explicit runtime integration is added. Their presence does not mean Box64, DXVK, Wine or Proton is packaged or used by the Android application. The product target is a native Android experience.

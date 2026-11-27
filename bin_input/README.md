@@ -1,1 +1,1 @@
-Put your own copy of the executable here. Everything except this file is ignored by Git.
+Place a legally obtained game executable here only for local analysis. Other files are ignored by Git. Never commit the executable, game assets, Steam/Epic data or generated proprietary game content. PE inspection is read-only analysis; it does not mean the game can execute on Android.
