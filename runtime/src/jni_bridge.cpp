@@ -85,9 +85,10 @@ bool start_rendering(ANativeWindow* window) {
     }
     const int32_t bufferWidth = ANativeWindow_getWidth(window);
     const int32_t bufferHeight = ANativeWindow_getHeight(window);
-    LOGI("Locked native render buffer: %dx%d (target 1280x720)", bufferWidth, bufferHeight);
-    if (bufferWidth != kRenderWidth || bufferHeight != kRenderHeight) {
-        LOGE("Android did not apply the requested 1280x720 native buffer size");
+    LOGI("Native render buffer: %dx%d (target 1280x720)", bufferWidth, bufferHeight);
+    // Not fatal: some devices still report the old size at this point.
+    if (bufferWidth <= 0 || bufferHeight <= 0) {
+        LOGE("invalid native buffer size");
         stop_rendering();
         return false;
     }
