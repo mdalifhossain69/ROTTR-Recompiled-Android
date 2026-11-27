@@ -21,6 +21,7 @@ if(ANDROID)
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/graphics.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/dxgi_vk_format.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/d3d11_device.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/vulkan_backend.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/audio/audio.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/input/input.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/input/touch_controls.cpp
