@@ -44,18 +44,17 @@ android {
     signingConfigs {
         release {
             def requiredSigningProperties = ['KEYSTORE_PATH', 'KEYSTORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD']
-            def missingSigningProperties = requiredSigningProperties.findAll { !project.hasProperty(it) || project.property(it).toString().trim().isEmpty() }
-            if (!missingSigningProperties.isEmpty()) {
-                throw new GradleException("Release signing is not configured. Missing: ${missingSigningProperties.join(', ')}. Use the persistent ROTTR release keystore.")
+            def hasAllSigningProperties = requiredSigningProperties.every {
+                project.hasProperty(it) && !project.property(it).toString().trim().isEmpty()
             }
-            def releaseKeystore = file(project.property('KEYSTORE_PATH'))
-            if (!releaseKeystore.isFile()) {
-                throw new GradleException("Release keystore does not exist: ${releaseKeystore}")
+            // Keep debug builds usable without release credentials. The release task
+            // below explicitly fails unless the persistent key is configured.
+            if (hasAllSigningProperties) {
+                storeFile file(project.property('KEYSTORE_PATH'))
+                storePassword project.property('KEYSTORE_PASSWORD')
+                keyAlias project.property('KEY_ALIAS')
+                keyPassword project.property('KEY_PASSWORD')
             }
-            storeFile releaseKeystore
-            storePassword project.property('KEYSTORE_PASSWORD')
-            keyAlias project.property('KEY_ALIAS')
-            keyPassword project.property('KEY_PASSWORD')
         }
     }
 
@@ -101,4 +100,24 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+}
+
+tasks.register('verifyReleaseSigning') {
+    doLast {
+        def requiredSigningProperties = ['KEYSTORE_PATH', 'KEYSTORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD']
+        def missingSigningProperties = requiredSigningProperties.findAll {
+            !project.hasProperty(it) || project.property(it).toString().trim().isEmpty()
+        }
+        if (!missingSigningProperties.isEmpty()) {
+            throw new GradleException("Release signing is not configured. Missing: ${missingSigningProperties.join(', ')}. Configure the persistent ROTTR release keystore.")
+        }
+        def releaseKeystore = file(project.property('KEYSTORE_PATH'))
+        if (!releaseKeystore.isFile()) {
+            throw new GradleException("Release keystore does not exist: ${releaseKeystore}")
+        }
+    }
+}
+
+tasks.matching { it.name == 'assembleRelease' }.configureEach {
+    dependsOn tasks.named('verifyReleaseSigning')
 }
