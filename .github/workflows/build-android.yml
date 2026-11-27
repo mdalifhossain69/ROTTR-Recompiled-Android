@@ -72,9 +72,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rottr-recomp-${{ matrix.variant }}-apk
-          path: android/app/build/outputs/apk/${{ matrix.variant }}/app-${{ matrix.variant }}.apk
+          path: android/build/outputs/apk/${{ matrix.variant }}/*.apk
           retention-days: 30
 
       - name: Print APK location
         run: |
-          echo "APK: android/app/build/outputs/apk/${{ matrix.variant }}/app-${{ matrix.variant }}.apk"
+          echo "APK: android/build/outputs/apk/${{ matrix.variant }}/"
