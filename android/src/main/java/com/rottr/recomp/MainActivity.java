@@ -35,7 +35,7 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
             LogUtils.i(TAG, "Launcher UI created; waiting for render surface");
         } catch (Throwable error) {
             LogUtils.exception("MainActivity.onCreate", error);
-            throw error;
+            throw new RuntimeException("Launcher initialization failed", error);
         }
     }
 
