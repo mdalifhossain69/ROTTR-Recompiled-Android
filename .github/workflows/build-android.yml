@@ -2,7 +2,7 @@ name: Build ROTTR-Recomp Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, "debug/**" ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -98,8 +98,18 @@ jobs:
         with:
           name: rottr-recomp-${{ matrix.variant }}-apk
           path: android/build/outputs/apk/${{ matrix.variant }}/*.apk
+          if-no-files-found: error
           retention-days: 30
 
       - name: Print APK location
         run: |
-          echo "APK: android/build/outputs/apk/${{ matrix.variant }}/"
+          set -euo pipefail
+          APK_DIR="android/build/outputs/apk/${{ matrix.variant }}"
+          echo "APK output directory: $APK_DIR"
+          find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" -print -exec ls -lh {} \\\;
+          APK_COUNT=$(find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" | wc -l)
+          test "$APK_COUNT" -gt 0 || { echo "::error::No APK was produced"; exit 1; }
+          while IFS= read -r apk; do
+            test -s "$apk" || { echo "::error::APK is empty: $apk"; exit 1; }
+            sha256sum "$apk"
+          done < <(find "$APK_DIR" -maxdepth 1 -type f -name "*.apk")
