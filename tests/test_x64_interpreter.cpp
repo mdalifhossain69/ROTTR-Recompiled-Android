@@ -203,7 +203,7 @@ int main() {
                 "64-bit shift instructions must reach HLT") ||
         !expect(cpu.gpr[0] == 12, "SHL must shift the destination left") ||
         !expect(cpu.gpr[1] == 4, "SHR must shift in zero bits") ||
-        !expect(cpu.gpr[2] == UINT64_MAX - 3,
+        !expect(cpu.gpr[2] == ~uint64_t{3},
                 "SAR must preserve the negative sign bit")) {
         return 1;
     }
