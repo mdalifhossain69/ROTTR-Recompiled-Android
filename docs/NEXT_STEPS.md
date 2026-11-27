@@ -1,3 +1,16 @@
+# Android Activity frame-loop update (2026-11-27)
+
+The regular Java `Activity` + `TextureView` path now starts a dedicated native frame-pump thread after a successful `graphics_init`. The thread calls `graphics_present()` at an approximately 60 Hz cadence, reports a five-second heartbeat, and is joined before graphics/window teardown. Surface recreation stops the old pump before releasing/reinitializing the window.
+
+**Important limitation:** this is lifecycle/frame-loop plumbing, not a working renderer or game execution loop. In the current `graphics.cpp`, Vulkan instance/device/surface/swapchain/render-pass/framebuffer/command-buffer creation and acquire/submit/present are still TODOs. `graphics_present()` currently only performs frame pacing and returns; it does not submit GPU work or draw pixels. Therefore this change alone does not remove the black screen and does not establish in-game FPS.
+
+## Immediate next implementation targets
+1. Implement and validate Android Vulkan instance/device/surface/swapchain creation, including queue-family and surface-format selection.
+2. Add swapchain image views, a clear-only render pass/framebuffers, command buffers, semaphores and fences; implement acquire/record/submit/present and swapchain recreation.
+3. Add a real game/render command path after the clear-only surface presentation is verified. Do not report gameplay as working until guest execution and draw submission are connected and tested on-device.
+
+---
+
 # Next steps — Phase 6 Complete
 
 Current commit: `2ee16f9` — Phase 6 Touch Controls and Performance complete.
