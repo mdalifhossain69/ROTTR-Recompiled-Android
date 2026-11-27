@@ -32,19 +32,27 @@ VulkanBackend::VulkanBackend(VkPhysicalDevice physical, VkDevice device, VkQueue
     VkCommandPoolCreateInfo info{}; info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     info.queueFamilyIndex = family;
-    vkCreateCommandPool(device_, &info, nullptr, &pool_);
+    if (vkCreateCommandPool(device_, &info, nullptr, &pool_) != VK_SUCCESS) return;
+    VkPipelineCacheCreateInfo cacheInfo{};
+    cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    if (vkCreatePipelineCache(device_, &cacheInfo, nullptr, &pipelineCache_) != VK_SUCCESS)
+        pipelineCache_ = VK_NULL_HANDLE;
 }
 VulkanBackend::~VulkanBackend() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (device_ == VK_NULL_HANDLE) return;
     vkDeviceWaitIdle(device_);
+    for (VkPipeline pipeline : pipelines_)
+        if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline, nullptr);
+    pipelines_.clear();
     for (auto& entry : allocations_) destroyAllocation(entry.second);
     allocations_.clear();
+    if (pipelineCache_ != VK_NULL_HANDLE) vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
     if (pool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_, pool_, nullptr);
 }
 bool VulkanBackend::valid() const {
     return physical_ != VK_NULL_HANDLE && device_ != VK_NULL_HANDLE &&
-           queue_ != VK_NULL_HANDLE && pool_ != VK_NULL_HANDLE;
+           queue_ != VK_NULL_HANDLE && pool_ != VK_NULL_HANDLE && pipelineCache_ != VK_NULL_HANDLE;
 }
 uint32_t VulkanBackend::memoryType(uint32_t bits, VkMemoryPropertyFlags required) const {
     VkPhysicalDeviceMemoryProperties props{};
@@ -382,6 +390,48 @@ void VulkanBackend::destroyShaderModule(VkShaderModule module) {
     if (module == VK_NULL_HANDLE) return;
     std::lock_guard<std::mutex> lock(mutex_);
     vkDestroyShaderModule(device_, module, nullptr);
+}
+
+VkPipeline VulkanBackend::createGraphicsPipeline(const VkGraphicsPipelineCreateInfo& createInfo) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!valid() || createInfo.sType != VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO ||
+        createInfo.stageCount < 2U || !createInfo.pStages ||
+        createInfo.layout == VK_NULL_HANDLE || createInfo.renderPass == VK_NULL_HANDLE)
+        return VK_NULL_HANDLE;
+    bool hasVertex = false, hasFragment = false;
+    for (uint32_t i = 0; i < createInfo.stageCount; ++i) {
+        const VkPipelineShaderStageCreateInfo& stage = createInfo.pStages[i];
+        if (stage.sType != VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO ||
+            stage.module == VK_NULL_HANDLE || !stage.pName) return VK_NULL_HANDLE;
+        if (stage.stage == VK_SHADER_STAGE_VERTEX_BIT) {
+            if (hasVertex) return VK_NULL_HANDLE;
+            hasVertex = true;
+        } else if (stage.stage == VK_SHADER_STAGE_FRAGMENT_BIT) {
+            if (hasFragment) return VK_NULL_HANDLE;
+            hasFragment = true;
+        } else if ((stage.stage & (VK_SHADER_STAGE_GEOMETRY_BIT |
+                                   VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+                                   VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
+                                   VK_SHADER_STAGE_COMPUTE_BIT)) != 0U) {
+            return VK_NULL_HANDLE;
+        }
+    }
+    if (!hasVertex || !hasFragment) return VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(device_, pipelineCache_, 1U, &createInfo, nullptr, &pipeline) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    try { pipelines_.push_back(pipeline); }
+    catch (...) { vkDestroyPipeline(device_, pipeline, nullptr); return VK_NULL_HANDLE; }
+    return pipeline;
+}
+
+void VulkanBackend::destroyGraphicsPipeline(VkPipeline pipeline) {
+    if (pipeline == VK_NULL_HANDLE) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = std::find(pipelines_.begin(), pipelines_.end(), pipeline);
+    if (it == pipelines_.end()) return;
+    vkDestroyPipeline(device_, pipeline, nullptr);
+    pipelines_.erase(it);
 }
 
 // Draw needs a translated shader pair, input layout, render pass and pipeline state.
