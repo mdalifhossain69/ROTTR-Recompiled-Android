@@ -20,6 +20,7 @@ if(ANDROID)
     add_library(rottr_runtime STATIC
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/graphics.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/dxgi_vk_format.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/dxbc_shader.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/d3d11_device.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/vulkan_backend.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/audio/audio.cpp
@@ -31,6 +32,16 @@ if(ANDROID)
     target_include_directories(rottr_runtime PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/runtime/include ${CMAKE_CURRENT_LIST_DIR}/runtime/src)
     target_link_libraries(rottr_runtime PUBLIC rottr_core)
+
+    # vkd3d-shader is the DXBC -> SPIR-V compiler. Keep the build usable for
+    # developers without the optional library, but never fake successful translation.
+    find_path(VKD3D_SHADER_INCLUDE_DIR vkd3d_shader.h)
+    find_library(VKD3D_SHADER_LIBRARY NAMES vkd3d-shader vkd3d_shader)
+    if(VKD3D_SHADER_INCLUDE_DIR AND VKD3D_SHADER_LIBRARY)
+        target_include_directories(rottr_runtime PRIVATE ${VKD3D_SHADER_INCLUDE_DIR})
+        target_link_libraries(rottr_runtime PRIVATE ${VKD3D_SHADER_LIBRARY})
+        target_compile_definitions(rottr_runtime PRIVATE ROTTR_HAS_VKD3D_SHADER=1)
+    endif()
     target_compile_options(rottr_runtime PRIVATE -Wall -Wextra -Werror)
     set_target_properties(rottr_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -70,6 +81,11 @@ add_executable(test_dxgi_vk_format tests/test_dxgi_vk_format.cpp runtime/src/gra
 target_include_directories(test_dxgi_vk_format PRIVATE runtime/src)
 target_compile_options(test_dxgi_vk_format PRIVATE -Wall -Wextra -Werror)
 add_test(NAME dxgi_vk_format COMMAND test_dxgi_vk_format)
+
+add_executable(test_dxbc_shader tests/test_dxbc_shader.cpp runtime/src/graphics/dxbc_shader.cpp)
+target_include_directories(test_dxbc_shader PRIVATE runtime/src)
+target_compile_options(test_dxbc_shader PRIVATE -Wall -Wextra -Werror)
+add_test(NAME dxbc_shader COMMAND test_dxbc_shader)
 
 add_executable(test_d3d11_device tests/test_d3d11_device.cpp runtime/src/graphics/d3d11_device.cpp runtime/src/graphics/dxgi_vk_format.cpp)
 target_include_directories(test_d3d11_device PRIVATE runtime/src)
