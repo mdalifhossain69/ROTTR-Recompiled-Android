@@ -222,7 +222,9 @@ extern "C" uint64_t host_CloseHandle(uint64_t handle, uint64_t, uint64_t,
                                      uint64_t, uint64_t, uint64_t,
                                      uint64_t, uint64_t) {
     std::lock_guard<std::mutex> lock(g_handlesMutex);
-    g_handles.erase(handle);
+    auto it = g_handles.find(handle);
+    if (it == g_handles.end()) return 0; // FALSE: invalid handle
+    g_handles.erase(it);
     return 1; // TRUE
 }
 
