@@ -10,7 +10,7 @@ Build a **native Android ARM64 application** that runs the user's legitimate ROT
 
 - Android owns the app lifecycle, storage access, window, input, audio integration, settings and user interface.
 - The long-term graphics path is Direct3D 11 game calls translated to Vulkan.
-- The original game is x86-64 Windows software. Android ARM64 cannot execute its instructions directly; a real CPU execution/recompilation strategy and Windows API compatibility are required.
+- The original game is x86-64 Windows software. Android ARM64 cannot execute its instructions directly. The selected primary strategy is project-owned x86-64-to-AArch64 DBT/JIT with a native code cache; the current interpreter is retained as a correctness oracle/fallback. See [ADR 0002](docs/adr/0002-aarch64-dbt-primary.md).
 - Do not turn the product into a Winlator-style desktop environment or expose a Windows desktop.
 - Do not reintroduce the rejected Proton/FEXCore packaging detour. Any proposed CPU execution technology must be evaluated against the native Android product goal and documented before adoption.
 - Do not bypass DRM, Steam/EOS ownership checks, or other access controls. Do not commit the game EXE, game assets, or proprietary runtime files.
@@ -260,7 +260,7 @@ Use these status labels consistently:
 
 **Do not start by adding more Vulkan draw primitives.** The architecture review is recorded in [`docs/adr/0001-x64-execution-android-arm64.md`](docs/adr/0001-x64-execution-android-arm64.md). It deliberately avoids introducing a GPLv2 CPU engine into this MIT-licensed project or reintroducing the rejected FEXCore/Proton stack.
 
-The first bounded CPU-execution slice is now present: a checked guest-memory x86-64 interpreter with a small explicit instruction subset (64-bit immediate MOV, register arithmetic/logic/compare, PUSH/POP, relative CALL/JMP, short conditional branches, NOP, RET and HLT). Unsupported instructions stop with an explicit result. The next CPU task is to expand decoder/ISA coverage and differential tests, then add AArch64 code generation and a code cache. This is not a production x86-64 backend.
+The current bounded CPU-execution slice is a checked guest-memory x86-64 interpreter with a small explicit instruction subset (64-bit immediate MOV, register arithmetic/logic/compare, PUSH/POP, relative CALL/JMP, short conditional branches, NOP, RET and HLT). Unsupported instructions stop with an explicit result. The next CPU task is to extract a reusable decoder/IR boundary, implement AArch64 code generation and a code cache, and differential-test translated blocks against the interpreter. The AArch64 translator and code cache do not exist yet; the interpreter is not the intended performance backend.
 
 This is a CPU-engine milestone, not a Windows game boot. PE loading, Windows API compatibility, dependency loading and the game graphics path remain separate milestones. Preserve the existing D3D11/Vulkan backend and its tests; do not claim it is connected to ROTTR until real game commands flow through it.
 
