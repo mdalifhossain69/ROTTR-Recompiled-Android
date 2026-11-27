@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.ROTTRRecomp" parent="Theme.MaterialComponents.DayNoActionBar">
+        <!-- Customize your theme here. -->
+    </style>
+</resources>
