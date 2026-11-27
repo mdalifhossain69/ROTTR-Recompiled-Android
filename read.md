@@ -260,7 +260,7 @@ Use these status labels consistently:
 
 **Do not start by adding more Vulkan draw primitives.** The architecture review is recorded in [`docs/adr/0001-x64-execution-android-arm64.md`](docs/adr/0001-x64-execution-android-arm64.md). It deliberately avoids introducing a GPLv2 CPU engine into this MIT-licensed project or reintroducing the rejected FEXCore/Proton stack.
 
-The next implementation task is a project-owned x86-64 decoder and typed guest IR, followed by a bounded interpreter used as the correctness oracle. Add instruction coverage incrementally and reject unsupported encodings explicitly. Only after the interpreter passes differential tests should AArch64 code generation and a code cache begin.
+The first bounded CPU-execution slice is now present: a checked guest-memory x86-64 interpreter with a small explicit instruction subset (64-bit immediate MOV, register arithmetic/logic/compare, PUSH/POP, relative CALL/JMP, short conditional branches, NOP, RET and HLT). Unsupported instructions stop with an explicit result. The next CPU task is to expand decoder/ISA coverage and differential tests, then add AArch64 code generation and a code cache. This is not a production x86-64 backend.
 
 This is a CPU-engine milestone, not a Windows game boot. PE loading, Windows API compatibility, dependency loading and the game graphics path remain separate milestones. Preserve the existing D3D11/Vulkan backend and its tests; do not claim it is connected to ROTTR until real game commands flow through it.
 
