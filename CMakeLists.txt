@@ -37,8 +37,6 @@ if(ANDROID)
     target_link_libraries(rottr_android PRIVATE rottr_runtime android log OpenSLES vulkan aaudio)
     target_compile_options(rottr_android PRIVATE -Wall -Wextra -Werror)
     set_target_properties(rottr_android PROPERTIES
-        PREFIX ""
-        SUFFIX ".so"
         ANDROID_SO_UNDEFINED OFF
     )
     return()

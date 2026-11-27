@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.graphics.SurfaceTexture;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
@@ -128,6 +129,13 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
     /* Storage permission                                               */
     /* ---------------------------------------------------------------- */
     private void requestStoragePermission() {
+        // These permissions are capped at API 33 in the manifest; asking for them
+        // on Android 14+ can fail immediately and take the activity down.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            LogUtils.i(TAG, "Skipping legacy storage permission request on Android 14+");
+            return;
+        }
+
         // Already granted
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 == PackageManager.PERMISSION_GRANTED) {

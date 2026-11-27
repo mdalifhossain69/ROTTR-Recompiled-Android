@@ -11,9 +11,19 @@ import android.view.Surface;
  */
 public class NativeBridge {
     private static final String TAG = "ROTTR-Recomp-NativeBridge";
-    
+
+    private static final boolean sNativeAvailable;
+
     static {
-        System.loadLibrary("rottr_android");
+        boolean loaded;
+        try {
+            System.loadLibrary("rottr_android");
+            loaded = true;
+        } catch (UnsatisfiedLinkError e) {
+            Log.e(TAG, "Failed to load librottr_android.so", e);
+            loaded = false;
+        }
+        sNativeAvailable = loaded;
     }
     
     // Native methods
@@ -28,6 +38,7 @@ public class NativeBridge {
      * Call this from Activity.onCreate() or when the surface is first created.
      */
     public static void init(int width, int height) {
+        if (!sNativeAvailable) return;
         Log.i(TAG, "Initializing native subsystems: " + width + "x" + height);
         nativeInit(width, height);
     }
@@ -37,6 +48,7 @@ public class NativeBridge {
      * Call this from SurfaceTextureListener.onSurfaceTextureAvailable() or similar.
      */
     public static void setSurface(Surface surface) {
+        if (!sNativeAvailable) return;
         Log.i(TAG, "Setting native surface: " + surface);
         nativeSetSurface(surface);
     }
@@ -46,6 +58,7 @@ public class NativeBridge {
      * Call this from SurfaceTextureListener.onSurfaceTextureDestroyed() or similar.
      */
     public static void releaseSurface() {
+        if (!sNativeAvailable) return;
         Log.i(TAG, "Releasing native surface");
         nativeReleaseSurface();
     }
@@ -55,6 +68,7 @@ public class NativeBridge {
      * Call this from Activity.onInputQueueCreated().
      */
     public static void setInputQueue(InputQueue inputQueue) {
+        if (!sNativeAvailable) return;
         Log.i(TAG, "Setting native input queue: " + inputQueue);
         nativeSetInputQueue(inputQueue);
     }
@@ -64,6 +78,7 @@ public class NativeBridge {
      * Call this from Activity.onDestroy().
      */
     public static void shutdown() {
+        if (!sNativeAvailable) return;
         Log.i(TAG, "Shutting down native subsystems");
         nativeShutdown();
     }
