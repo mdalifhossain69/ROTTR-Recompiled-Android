@@ -16,6 +16,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include <vector>
 #include <atomic>
 
@@ -56,6 +57,7 @@ uint64_t allocFileHandle(const char* path, const char* mode) {
     auto it = g_handles.find(h);
     return it == g_handles.end() ? nullptr : &it->second;
 }
+}  // namespace
 
 // ---- Critical sections ----
 std::map<uint64_t, pthread_mutex_t*> g_criticalSections;
@@ -84,10 +86,28 @@ struct SemEntry {
 std::map<uint64_t, SemEntry> g_semaphores;
 std::mutex g_semaphoresMutex;
 
+// ---- Threads ----
+struct ThreadInfo {
+    uint64_t startAddr;
+    uint64_t param;
+};
+
+std::map<uint64_t, pthread_t> g_threads;
+std::mutex g_threadsMutex;
+
+static void* threadTrampoline(void* arg) {
+    ThreadInfo* info = static_cast<ThreadInfo*>(arg);
+    if (info->startAddr) {
+        typedef uint64_t (*ThreadProc)(uint64_t);
+        ThreadProc proc = reinterpret_cast<ThreadProc>(info->startAddr);
+        proc(info->param);
+    }
+    delete info;
+    return nullptr;
+}
+
 // ---- Thread-local last error ----
 thread_local uint32_t g_lastError = 0;
-
-}  // namespace
 
 // ---- Dummy heap object ----
 uint8_t g_heap[64] = {};
@@ -143,12 +163,36 @@ extern "C" uint64_t host_Sleep(uint64_t ms, uint64_t, uint64_t, uint64_t,
 
 extern "C" uint64_t host_GetCurrentProcessId(uint64_t, uint64_t, uint64_t, uint64_t,
                                             uint64_t, uint64_t, uint64_t, uint64_t) {
-    return 1;
+    return static_cast<uint64_t>(getpid());
 }
 
 extern "C" uint64_t host_GetCurrentThreadId(uint64_t, uint64_t, uint64_t, uint64_t,
                                            uint64_t, uint64_t, uint64_t, uint64_t) {
-    return 1;
+    return reinterpret_cast<uint64_t>(pthread_self());
+}
+
+extern "C" uint64_t host_CreateThread(uint64_t sa, uint64_t stackSize,
+                                      uint64_t startAddr, uint64_t param,
+                                      uint64_t flags, uint64_t threadIdPtr,
+                                      uint64_t, uint64_t) {
+    (void)sa; (void)stackSize; (void)flags; (void)threadIdPtr;
+    uint64_t h = allocHandle(5); // thread handle
+    ThreadInfo* info = new ThreadInfo{startAddr, param};
+    pthread_t t;
+    if (pthread_create(&t, nullptr, threadTrampoline, info) != 0) {
+        delete info;
+        return static_cast<uint64_t>(-1);
+    }
+    std::lock_guard<std::mutex> lock(g_threadsMutex);
+    g_threads.emplace(h, t);
+    return h;
+}
+
+extern "C" uint64_t host_ExitThread(uint64_t exitCode, uint64_t, uint64_t, uint64_t,
+                                    uint64_t, uint64_t, uint64_t, uint64_t) {
+    (void)exitCode;
+    pthread_exit(nullptr);
+    return 0; // unreachable
 }
 
 extern "C" uint64_t host_GetCurrentProcess(uint64_t, uint64_t, uint64_t, uint64_t,
@@ -320,6 +364,17 @@ extern "C" uint64_t host_CloseHandle(uint64_t handle, uint64_t, uint64_t,
     if (it == g_handles.end()) return 0; // FALSE: invalid handle
     if (it->second.file) std::fclose(it->second.file);
     g_handles.erase(it);
+
+    // If this was a thread handle, detach the pthread if still running.
+    {
+        std::lock_guard<std::mutex> tlock(g_threadsMutex);
+        auto tit = g_threads.find(handle);
+        if (tit != g_threads.end()) {
+            pthread_detach(tit->second);
+            g_threads.erase(tit);
+        }
+    }
+
     return 1; // TRUE
 }
 
@@ -617,6 +672,22 @@ extern "C" uint64_t host_WaitForSingleObject(uint64_t handle, uint64_t timeout,
         }
     }
 
+    // Try thread — join until it exits
+    {
+        pthread_t* t = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_threadsMutex);
+            auto it = g_threads.find(handle);
+            if (it != g_threads.end()) t = &it->second;
+        }
+        if (t) {
+            pthread_join(*t, nullptr);
+            std::lock_guard<std::mutex> lock(g_threadsMutex);
+            g_threads.erase(handle);
+            return 0; // WAIT_OBJECT_0
+        }
+    }
+
     // File handle — always signaled
     {
         std::lock_guard<std::mutex> lock(g_handlesMutex);
@@ -718,6 +789,8 @@ void registerHostModules() {
         {"Sleep", reinterpret_cast<uint64_t>(&host_Sleep)},
         {"GetCurrentProcessId", reinterpret_cast<uint64_t>(&host_GetCurrentProcessId)},
         {"GetCurrentThreadId", reinterpret_cast<uint64_t>(&host_GetCurrentThreadId)},
+        {"CreateThread", reinterpret_cast<uint64_t>(&host_CreateThread)},
+        {"ExitThread", reinterpret_cast<uint64_t>(&host_ExitThread)},
         {"GetCurrentProcess", reinterpret_cast<uint64_t>(&host_GetCurrentProcess)},
         {"GetCurrentThread", reinterpret_cast<uint64_t>(&host_GetCurrentThread)},
         {"GetCommandLineA", reinterpret_cast<uint64_t>(&host_GetCommandLineA)},
