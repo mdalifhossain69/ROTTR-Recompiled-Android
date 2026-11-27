@@ -21,7 +21,7 @@ public final class LogUtils {
     private static final String TAG = "ROTTR-Diagnostics";
     private static PrintWriter writer;
     private static File logFile;
-    private static Process logcatProcess;
+    private static java.lang.Process logcatProcess;
     private static Thread.UncaughtExceptionHandler previousHandler;
     private static boolean initialized;
 
