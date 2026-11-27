@@ -22,6 +22,7 @@ public final class BootScreen extends FrameLayout implements SurfaceHolder.Callb
 
         SurfaceView surfaceView = new SurfaceView(activity);
         surfaceView.getHolder().addCallback(this);
+        surfaceView.getHolder().setFixedSize(1280, 720);
         addView(surfaceView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
         float density = getResources().getDisplayMetrics().density;
