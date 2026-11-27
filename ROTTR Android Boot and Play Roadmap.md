@@ -1,0 +1,124 @@
+# ROTTR Android: Boot and Play Roadmap
+
+For mdalifhossain69/ROTTR-Recompiled-Android · 27 November 2026
+
+## How to use this
+
+Do the steps in order. A step is done only when its **Pass** condition is true and the earlier tests still pass. This is an engineering plan, not a proven route: nobody has verified that this runtime can run the game, later steps will split into smaller ones, and some may need redesign. There is no time estimate.
+
+Host test command:
+
+```
+cmake -S . -B build/host && cmake --build build/host && ctest --test-dir build/host --output-on-failure
+```
+
+For each step, add a test file under `tests/`, register it with `add_test` in `CMakeLists.txt`, run it in GitHub Actions, and run it on the phone when the step involves ARM64, memory protection or graphics.
+
+Rules: commit no game files. Keep Steam, EOS and ownership checks intact. If a check cannot work legitimately in your runtime, stop there rather than patching or faking it.
+
+Shorter route to playing: Winlator Ludashi, which you report already runs the game. Steps below are for your own runtime.
+
+## Phase A: Foundation
+
+1. ✅ Fix the Vulkan surface size. **Pass:** log shows `first frame presented` (done).
+2. ✅ Build tests and APK in GitHub Actions. **Pass:** workflow succeeds (you reported this done).
+3. Add `mingw-w64` to the workflow for building your own Windows test programs. **Pass:** a test `.exe` is produced in CI.
+
+## Phase B: Guest memory
+
+4. Reserve a guest address range with `mmap` and translate guest to host addresses with bounds checks. **Pass:** first and last byte work; one byte outside fails.
+5. Commit and decommit 4 KB guest pages. **Pass:** uncommitted access fails; recommitted pages read zero.
+6. Protect pages: none, read, write, execute. Handle 16 KB host pages by tracking 4 KB permissions in software. **Pass:** every forbidden access is rejected on 4 KB and simulated 16 KB hosts.
+7. Release and query regions, with 64 KB allocation granularity. **Pass:** overlap, double free, unaligned base and integer overflow are rejected.
+8. Route `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery` to this manager. **Pass:** results and error codes match a real Windows test program.
+
+## Phase C: PE loader
+
+9. Map headers and sections of a PE32+ file. **Pass:** bytes match the file; uninitialized space is zero; truncated files are rejected.
+10. Apply `DIR64` relocations. **Pass:** loading at two bases gives correct pointers at both.
+11. Apply final section protections. **Pass:** writing to `.text` fails.
+12. Resolve imports by name and ordinal, with a trap for each missing one. **Pass:** calling a missing import logs DLL and function name and stops.
+13. Parse exports, including forwarders. **Pass:** name, ordinal and forwarded lookups resolve.
+14. Load guest DLLs with dependencies and reference counts. **Pass:** your EXE calls your DLL; a dependency cycle does not hang.
+15. Create PEB, TEB, stack and the GS base. **Pass:** `gs:[0x30]` returns the TEB and `gs:[0x60]` the PEB.
+16. Set up static TLS and TLS callbacks (build this test with the MSVC target). **Pass:** callback runs before entry; variable has its initial value.
+17. Call `DllMain` and entry points in dependency order. **Pass:** logged order matches the same program on Windows.
+18. Load your own import-free EXE whose entry returns 42. **Pass:** interpreter ends with RAX equal to 42.
+
+## Phase D: CPU interpreter
+
+19. Separate the instruction decoder from execution (a maintained decoder library such as Zydis is an option). **Pass:** existing tests pass; random bytes never read out of bounds.
+20. Add differential testing against real x86-64 hardware on the CI runner. **Pass:** registers, defined flags and memory match.
+21. Handle all prefixes, ModRM forms and high-byte registers. **Pass:** differential tests match.
+22. Complete integer, stack, call, multiply, divide and bit instructions. **Pass:** differential tests match, including divide faults.
+23. Add string instructions with `REP`. **Pass:** forward, backward and faulting copies match.
+24. Add atomics and fences with x86 memory ordering. **Pass:** multithreaded counter and litmus tests show no forbidden result on the phone.
+25. Add SSE through SSE4.2. **Pass:** results match, including NaN and rounding cases.
+26. Add x87 and MXCSR behavior. **Pass:** precision and rounding tests match.
+27. Add `CPUID`, `RDTSC`, `XGETBV`. **Pass:** only implemented features are advertised.
+28. Inventory instructions the game reaches, adding AVX or others if needed. **Pass:** each unsupported opcode is logged with address and bytes, then implemented and tested.
+
+## Phase E: Windows calls and runtime
+
+29. Build the guest-to-host call bridge using the Windows x64 convention. **Pass:** 0, 4 and 10 argument calls, floats and returns are correct.
+30. Support host-to-guest callbacks. **Pass:** nested callbacks preserve all nonvolatile registers.
+31. Implement process exit, last-error, module and command-line APIs. **Pass:** your EXE calls `ExitProcess(42)` and the app reports 42.
+32. Implement handles. **Pass:** invalid and closed handles return correct errors.
+33. Implement heaps. **Pass:** a million random allocate and free operations show no corruption.
+34. Implement files and paths, mapping the game folder through Android storage. **Pass:** case-insensitive open, seek past 4 GB and directory listing work.
+35. Implement memory-mapped files. **Pass:** multiple views show correct data.
+36. Implement threads, thread IDs and per-thread TLS. **Pass:** 32 threads keep separate values and exit cleanly.
+37. Implement events, mutexes, semaphores, critical sections, SRW locks, condition variables and waits. **Pass:** stress test runs one hour with no deadlock.
+38. Implement timers, clocks and sleep. **Pass:** time never goes backward.
+39. Implement table-based exceptions and stack unwinding using `.pdata`. **Pass:** nested `__try`, `__finally` and C++ throw tests match Windows.
+40. Provide the C and C++ runtime DLLs, using legitimately obtained or open implementations. **Pass:** a C++ program using strings, streams and exceptions runs.
+41. Implement registry and user-folder APIs. **Pass:** values persist after restart.
+42. Implement the window and message loop. **Pass:** create, resize, focus, input and quit messages arrive in order.
+43. Add COM basics. **Pass:** reference counting and interface queries work.
+44. Add the network and system APIs the game calls. **Pass:** offline calls return documented errors without hanging.
+45. Generate a report of all 912 imports as implemented, tested or missing. **Pass:** report runs in CI and unknown calls never return fake success.
+
+## Phase F: ARM64 translator
+
+Start after step 28. It can run alongside later work.
+
+46. Write an ARM64 instruction emitter. **Pass:** output matches the LLVM assembler.
+47. Manage executable memory and instruction-cache flushing. **Pass:** generated code runs repeatedly on the phone.
+48. Translate basic blocks with interpreter fallback. **Pass:** state matches the interpreter after every block.
+49. Cover flags, branches, SIMD, atomics and memory ordering. **Pass:** all CPU tests pass in translated mode.
+50. Add block cache, linking and invalidation. **Pass:** self-modifying code runs correctly.
+51. Handle faults and exceptions inside translated code. **Pass:** reported guest address and registers are exact.
+52. Profile and optimize. **Pass:** benchmarks speed up with identical results.
+
+## Phase G: Graphics
+
+53. Compile the DXBC shader library for Android ARM64 (vkd3d-shader). **Pass:** your test shaders produce SPIR-V accepted by `spirv-val`.
+54. Expose DXGI as guest COM interfaces. **Pass:** your program lists the adapter and creates a swapchain.
+55. Expose D3D11 device and context interfaces (evaluate reusing DXVK Native before writing your own). **Pass:** your program clears the screen blue.
+56. Draw a triangle. **Pass:** screenshot matches the reference image.
+57. Add buffers, textures, views, samplers and constant buffers. **Pass:** textured spinning cube matches the reference.
+58. Add depth, blend, rasterizer state and multiple render targets. **Pass:** state tests match.
+59. Add compute, geometry and tessellation shaders as supported by the GPU. **Pass:** each sample matches.
+60. Add synchronization, queries, deferred contexts and compressed formats. **Pass:** Vulkan validation reports no errors.
+61. Add pipeline caching and surface recreation. **Pass:** 20 suspend and resume cycles survive.
+
+## Phase H: Boot the game
+
+62. Load `ROTTR.exe` and all its DLLs without running it. **Pass:** every import resolves to real code.
+63. Make Steam and EOS work legitimately with real components. **Pass:** ownership is verified normally. If impossible, stop here.
+64. Run to the entry point and C runtime start. **Pass:** execution reaches the game's main function.
+65. Repeat: run, take the first failure, write a small test that reproduces it, fix it. **Pass:** the game creates its window.
+66. Create the D3D11 device. **Pass:** game's first present reaches the screen.
+67. Play intro video through Bink using the user's own DLL. **Pass:** video displays correctly.
+68. **Reach the main menu.** **Pass:** three clean launches in a row.
+
+## Phase I: Make it playable
+
+69. Add game audio. **Pass:** music and speech play in sync.
+70. Add controller input and touch controls. **Pass:** every game action works.
+71. Verify saves. **Pass:** save, close, reopen and load gives the same progress.
+72. Start a new game. **Pass:** Lara is controllable and the first level renders.
+73. Test long play. **Pass:** two hours without a crash or growing memory.
+74. Optimize CPU, GPU, shader stutter and heat. **Pass:** a stable 30 FPS in a fixed test scene after 30 minutes; raise the target afterward.
+75. Finish the game once. **Pass:** campaign completes with no blocker.
+76. Release the APK with source, licenses and no game files. **Pass:** a clean phone install works using only the user's own game copy.
