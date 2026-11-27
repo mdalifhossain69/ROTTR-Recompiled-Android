@@ -66,8 +66,9 @@ jobs:
             -keysize 2048 \
             -validity 10000 \
             -keystore ${{ env.KEYSTORE_PATH }} \
+            -storetype PKCS12 \
             -storepass ${{ env.KEYSTORE_PASSWORD }} \
-            -keypass ${{ env.KEY_PASSWORD }} \
+            -keypass ${{ env.KEYSTORE_PASSWORD }} \
             -dname "CN=ROTTR-Recomp, OU=Android, O=ROTTR-Recomp, L=Unknown, ST=Unknown, C=US" \
             -noprompt
 
@@ -90,7 +91,7 @@ jobs:
             -PKEYSTORE_PATH=${{ env.KEYSTORE_PATH }} \
             -PKEYSTORE_PASSWORD=${{ env.KEYSTORE_PASSWORD }} \
             -PKEY_ALIAS=${{ env.KEY_ALIAS }} \
-            -PKEY_PASSWORD=${{ env.KEY_PASSWORD }}
+            -PKEY_PASSWORD=${{ env.KEYSTORE_PASSWORD }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
