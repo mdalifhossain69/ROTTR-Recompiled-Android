@@ -26,6 +26,7 @@ A Direct3D-to-Vulkan layer does not translate x64 CPU instructions. CPU recompil
 Added `runtime/src/graphics/dxbc_shader.*`:
 - Bounds-checked DXBC container parsing for SHDR/SHEX chunks, shader stage, shader-model version, and token-stream length.
 - A real DXBC-to-SPIR-V compiler adapter using the vkd3d-shader API when that library is linked; validates the returned SPIR-V magic/word alignment and reports compiler errors rather than producing placeholder modules.
+- `VulkanBackend::createShaderModule()` creates a real `VkShaderModule` from validated SPIR-V words, with a matching destruction method.
 - CMake auto-detects an externally provisioned `vkd3d-shader` header/library on Android. Without it, container inspection and tests still build, but shader compilation explicitly returns `CompilerUnavailable`.
 - Host tests cover valid shader headers, malformed offsets/sizes/token counts, and unsupported stages.
 
