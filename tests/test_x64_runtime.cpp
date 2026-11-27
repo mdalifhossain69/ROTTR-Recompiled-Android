@@ -10,7 +10,7 @@ int main() {
     }
     const std::string report = rottr::describeWindowsX64ExecutionBackend();
     if (report.find("Game CPU: Windows x86-64") == std::string::npos ||
-        report.find("x86-64 backend: NOT LINKED") == std::string::npos) {
+        report.find("Windows x86-64 game runtime: NOT AVAILABLE") == std::string::npos) {
         std::puts("Missing or misleading x64 backend status");
         return 1;
     }
