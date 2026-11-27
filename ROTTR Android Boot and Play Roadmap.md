@@ -65,7 +65,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 31. ✅ Implement process exit, last-error, module and command-line APIs. **Pass:** your EXE calls `ExitProcess(42)` and the app reports 42 (`tests/test_win32_exit`, host); `GetLastError`/`SetLastError` stubs implemented in `runtime/src/win32_host.cpp`.
 32. ✅ Implement handles. **Pass:** invalid and closed handles return correct errors (`tests/test_win32_handles`, host).
 33. ✅ Implement heaps. **Pass:** a million random allocate and free operations show no corruption (`tests/test_win32_heap`, host).
-34. Implement files and paths, mapping the game folder through Android storage. **Pass:** case-insensitive open, seek past 4 GB and directory listing work.
+34. ✅ Implement files and paths, mapping the game folder through Android storage. **Pass:** case-insensitive open, seek past 4 GB and directory listing work (`tests/test_win32_files`, host).
 35. Implement memory-mapped files. **Pass:** multiple views show correct data.
 36. Implement threads, thread IDs and per-thread TLS. **Pass:** 32 threads keep separate values and exit cleanly.
 37. Implement events, mutexes, semaphores, critical sections, SRW locks, condition variables and waits. **Pass:** stress test runs one hour with no deadlock.

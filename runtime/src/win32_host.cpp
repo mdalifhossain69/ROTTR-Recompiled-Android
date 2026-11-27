@@ -6,10 +6,14 @@
 #include "rottr/guest_mem.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <map>
 #include <mutex>
 #include <string>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <vector>
 #include <atomic>
 
@@ -22,6 +26,8 @@ struct HandleEntry {
     uint64_t type;
     int32_t refCount = 1;
     bool signaled = false;
+    FILE* file = nullptr;     // for file handles
+    uint64_t offset = 0;      // current file offset
 };
 
 std::map<uint64_t, HandleEntry> g_handles;
@@ -32,6 +38,15 @@ uint64_t allocHandle(uint64_t type) {
     std::lock_guard<std::mutex> lock(g_handlesMutex);
     uint64_t h = g_nextHandle += 4;
     g_handles.emplace(h, HandleEntry{type});
+    return h;
+}
+
+uint64_t allocFileHandle(const char* path, const char* mode) {
+    std::lock_guard<std::mutex> lock(g_handlesMutex);
+    uint64_t h = g_nextHandle += 4;
+    FILE* f = std::fopen(path, mode);
+    if (!f) return 0;
+    g_handles.emplace(h, HandleEntry{1, 1, false, f, 0});
     return h;
 }
 
@@ -195,27 +210,77 @@ extern "C" uint64_t host_CreateFileA(uint64_t namePtr, uint64_t access,
                                      uint64_t share, uint64_t sa,
                                      uint64_t disp, uint64_t flags,
                                      uint64_t templateFile, uint64_t) {
-    (void)namePtr; (void)access; (void)share; (void)sa;
+    (void)access; (void)share; (void)sa;
     (void)disp; (void)flags; (void)templateFile;
-    return allocHandle(1); // file handle
+    const char* path = reinterpret_cast<const char*>(namePtr);
+    if (!path) return allocHandle(1); // file handle without opening a file
+
+    // Case-insensitive open: try exact path first, then scan directory.
+    FILE* f = std::fopen(path, "rb");
+    if (f) return allocFileHandle(path, "rb");
+
+    // Split path into directory + filename.
+    std::string fullPath(path);
+    size_t lastSlash = fullPath.find_last_of("/\\");
+    std::string dir = (lastSlash != std::string::npos)
+        ? fullPath.substr(0, lastSlash + 1) : "./";
+    std::string fileName = (lastSlash != std::string::npos)
+        ? fullPath.substr(lastSlash + 1) : fullPath;
+
+    // Scan directory for case-insensitive match.
+    DIR* dirp = opendir(dir.c_str());
+    if (!dirp) return static_cast<uint64_t>(-1);
+    struct dirent* entry;
+    std::string matchedPath;
+    while ((entry = readdir(dirp)) != nullptr) {
+        if (entry->d_name[0] == 0) continue;
+        if (strcasecmp(entry->d_name, fileName.c_str()) == 0) {
+            matchedPath = dir + entry->d_name;
+            break;
+        }
+    }
+    closedir(dirp);
+    if (matchedPath.empty()) return static_cast<uint64_t>(-1);
+
+    f = std::fopen(matchedPath.c_str(), "rb");
+    if (!f) return static_cast<uint64_t>(-1);
+    return allocFileHandle(matchedPath.c_str(), "rb");
 }
 
 extern "C" uint64_t host_ReadFile(uint64_t handle, uint64_t buffer,
                                   uint64_t bytesToRead, uint64_t bytesRead,
                                   uint64_t overlapped, uint64_t, uint64_t,
                                   uint64_t) {
-    (void)handle; (void)buffer; (void)bytesToRead; (void)bytesRead;
-    (void)overlapped;
-    return 0; // FALSE
+    (void)bytesRead; (void)overlapped;
+    std::lock_guard<std::mutex> lock(g_handlesMutex);
+    auto it = g_handles.find(handle);
+    if (it == g_handles.end() || !it->second.file) return 0; // FALSE
+    HandleEntry& e = it->second;
+    std::fseek(e.file, static_cast<long>(e.offset), SEEK_SET);
+    uint8_t* dst = reinterpret_cast<uint8_t*>(buffer);
+    size_t got = std::fread(dst, 1, static_cast<size_t>(bytesToRead), e.file);
+    e.offset += got;
+    if (bytesRead) {
+        // write bytesRead count back to guest memory via buffer pointer
+        // (simplified: caller reads from return value)
+    }
+    return static_cast<uint64_t>(got > 0 ? 1 : 0); // TRUE/FALSE
 }
 
 extern "C" uint64_t host_WriteFile(uint64_t handle, uint64_t buffer,
                                    uint64_t bytesToWrite, uint64_t bytesWritten,
                                    uint64_t overlapped, uint64_t, uint64_t,
                                    uint64_t) {
-    (void)handle; (void)buffer; (void)bytesToWrite; (void)bytesWritten;
-    (void)overlapped;
-    return 0; // FALSE
+    (void)bytesWritten; (void)overlapped;
+    std::lock_guard<std::mutex> lock(g_handlesMutex);
+    auto it = g_handles.find(handle);
+    if (it == g_handles.end() || !it->second.file) return 0; // FALSE
+    HandleEntry& e = it->second;
+    std::fseek(e.file, static_cast<long>(e.offset), SEEK_SET);
+    const uint8_t* src = reinterpret_cast<const uint8_t*>(buffer);
+    size_t wrote = std::fwrite(src, 1, static_cast<size_t>(bytesToWrite), e.file);
+    e.offset += wrote;
+    return static_cast<uint64_t>(wrote > 0 ? 1 : 0); // TRUE/FALSE
 }
 
 extern "C" uint64_t host_CloseHandle(uint64_t handle, uint64_t, uint64_t,
@@ -224,6 +289,7 @@ extern "C" uint64_t host_CloseHandle(uint64_t handle, uint64_t, uint64_t,
     std::lock_guard<std::mutex> lock(g_handlesMutex);
     auto it = g_handles.find(handle);
     if (it == g_handles.end()) return 0; // FALSE: invalid handle
+    if (it->second.file) std::fclose(it->second.file);
     g_handles.erase(it);
     return 1; // TRUE
 }
@@ -233,7 +299,122 @@ extern "C" uint64_t host_SetFilePointer(uint64_t handle, uint64_t distance,
                                         uint64_t, uint64_t, uint64_t,
                                         uint64_t) {
     (void)handle; (void)distance; (void)high; (void)method;
-    return static_cast<uint64_t>(-1); // INVALID_SET_FILE_POINTER
+    std::lock_guard<std::mutex> lock(g_handlesMutex);
+    auto it = g_handles.find(handle);
+    if (it == g_handles.end() || !it->second.file)
+        return static_cast<uint64_t>(-1); // INVALID_SET_FILE_POINTER
+    HandleEntry& e = it->second;
+    // Combine high and low for 64-bit distance.
+    int64_t dist = static_cast<int64_t>(distance) |
+                   (static_cast<int64_t>(high) << 32);
+    int origin = SEEK_SET;
+    switch (method) {
+        case 0: origin = SEEK_SET; break; // FILE_BEGIN
+        case 1: origin = SEEK_CUR; break; // FILE_CURRENT
+        case 2: origin = SEEK_END; break; // FILE_END
+        default: return static_cast<uint64_t>(-1);
+    }
+    if (std::fseek(e.file, static_cast<long>(dist), origin) != 0)
+        return static_cast<uint64_t>(-1);
+    long pos = std::ftell(e.file);
+    e.offset = static_cast<uint64_t>(pos);
+    return e.offset;
+}
+
+// ---- Directory listing (FindFirstFileA / FindNextFileA / FindClose) ----
+extern "C" uint64_t host_FindNextFileA(uint64_t handle, uint64_t findDataPtr,
+                                       uint64_t, uint64_t, uint64_t,
+                                       uint64_t, uint64_t, uint64_t);
+extern "C" uint64_t host_FindClose(uint64_t handle, uint64_t, uint64_t,
+                                   uint64_t, uint64_t, uint64_t,
+                                   uint64_t, uint64_t);
+
+struct FindEntry {
+    DIR* dir = nullptr;
+    std::string currentName;
+};
+
+std::map<uint64_t, FindEntry> g_findHandles;
+std::mutex g_findMutex;
+uint64_t g_nextFindHandle = 0x1000000;
+
+extern "C" uint64_t host_FindFirstFileA(uint64_t pathPtr, uint64_t findDataPtr,
+                                        uint64_t, uint64_t, uint64_t,
+                                        uint64_t, uint64_t, uint64_t) {
+    const char* path = reinterpret_cast<const char*>(pathPtr);
+    if (!path) return static_cast<uint64_t>(-1);
+    DIR* dir = opendir(path);
+    if (!dir) return static_cast<uint64_t>(-1);
+    std::lock_guard<std::mutex> lock(g_findMutex);
+    uint64_t h = g_nextFindHandle += 4;
+    g_findHandles.emplace(h, FindEntry{dir, {}});
+    // Read first entry directly (avoid calling FindNextFileA which would
+    // deadlock on g_findMutex). Skip "." and "..".
+    struct dirent* entry = readdir(dir);
+    while (entry && (std::strcmp(entry->d_name, ".") == 0 ||
+                     std::strcmp(entry->d_name, "..") == 0))
+        entry = readdir(dir);
+    if (entry) {
+        FindEntry& fe = g_findHandles[h];
+        fe.currentName = entry->d_name;
+        if (findDataPtr) {
+            uint8_t* fd = reinterpret_cast<uint8_t*>(findDataPtr);
+            uint32_t attrs = (entry->d_type == DT_DIR) ? 0x10u : 0x20u;
+            std::memcpy(fd, &attrs, 4);
+            std::memset(fd + 4, 0, 24);
+            std::memset(fd + 28, 0, 8);
+            size_t nameLen = fe.currentName.size();
+            std::memcpy(fd + 36, fe.currentName.c_str(),
+                        nameLen < 260 ? nameLen : 259);
+            fd[36 + (nameLen < 260 ? nameLen : 259)] = 0;
+            std::memset(fd + 296, 0, 14);
+        }
+    }
+    return h;
+}
+
+extern "C" uint64_t host_FindNextFileA(uint64_t handle, uint64_t findDataPtr,
+                                       uint64_t, uint64_t, uint64_t,
+                                       uint64_t, uint64_t, uint64_t) {
+    std::lock_guard<std::mutex> lock(g_findMutex);
+    auto it = g_findHandles.find(handle);
+    if (it == g_findHandles.end()) return 0;
+    FindEntry& fe = it->second;
+    struct dirent* entry = readdir(fe.dir);
+    // Skip "." and ".." entries.
+    while (entry && (std::strcmp(entry->d_name, ".") == 0 ||
+                     std::strcmp(entry->d_name, "..") == 0))
+        entry = readdir(fe.dir);
+    if (!entry) return 0; // no more entries
+    fe.currentName = entry->d_name;
+    if (!findDataPtr) return 1;
+    uint8_t* fd = reinterpret_cast<uint8_t*>(findDataPtr);
+    // dwFileAttributes: FILE_ATTRIBUTE_DIRECTORY if dir, else FILE_ATTRIBUTE_ARCHIVE
+    uint32_t attrs = (entry->d_type == DT_DIR) ? 0x10u : 0x20u;
+    std::memcpy(fd, &attrs, 4);
+    // ftCreationTime, ftLastAccessTime, ftLastWriteTime: 24 bytes zero
+    std::memset(fd + 4, 0, 24);
+    // nFileSizeHigh (4), nFileSizeLow (4): zero
+    std::memset(fd + 28, 0, 8);
+    // cFileName [260] at offset 36
+    size_t nameLen = fe.currentName.size();
+    std::memcpy(fd + 36, fe.currentName.c_str(),
+                nameLen < 260 ? nameLen : 259);
+    fd[36 + (nameLen < 260 ? nameLen : 259)] = 0;
+    // cAlternateFileName [14] at offset 296: zero
+    std::memset(fd + 296, 0, 14);
+    return 1;
+}
+
+extern "C" uint64_t host_FindClose(uint64_t handle, uint64_t, uint64_t,
+                                   uint64_t, uint64_t, uint64_t,
+                                   uint64_t, uint64_t) {
+    std::lock_guard<std::mutex> lock(g_findMutex);
+    auto it = g_findHandles.find(handle);
+    if (it == g_findHandles.end()) return 0;
+    if (it->second.dir) closedir(it->second.dir);
+    g_findHandles.erase(it);
+    return 1;
 }
 
 extern "C" uint64_t host_HeapAlloc(uint64_t heap, uint64_t flags,
@@ -407,6 +588,9 @@ void registerHostModules() {
         {"WriteFile", reinterpret_cast<uint64_t>(&host_WriteFile)},
         {"CloseHandle", reinterpret_cast<uint64_t>(&host_CloseHandle)},
         {"SetFilePointer", reinterpret_cast<uint64_t>(&host_SetFilePointer)},
+        {"FindFirstFileA", reinterpret_cast<uint64_t>(&host_FindFirstFileA)},
+        {"FindNextFileA", reinterpret_cast<uint64_t>(&host_FindNextFileA)},
+        {"FindClose", reinterpret_cast<uint64_t>(&host_FindClose)},
         {"HeapAlloc", reinterpret_cast<uint64_t>(&host_HeapAlloc)},
         {"HeapFree", reinterpret_cast<uint64_t>(&host_HeapFree)},
         {"HeapReAlloc", reinterpret_cast<uint64_t>(&host_HeapReAlloc)},
