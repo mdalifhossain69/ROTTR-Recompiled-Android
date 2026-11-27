@@ -137,6 +137,11 @@ target_link_libraries(test_pe_modules PRIVATE rottr_core)
 target_compile_options(test_pe_modules PRIVATE -Wall -Wextra -Werror)
 add_test(NAME pe_modules COMMAND test_pe_modules)
 
+add_executable(test_win32_gs tests/test_win32_gs.cpp)
+target_link_libraries(test_win32_gs PRIVATE rottr_core)
+target_compile_options(test_win32_gs PRIVATE -Wall -Wextra -Werror)
+add_test(NAME win32_gs COMMAND test_win32_gs)
+
 add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
 target_link_libraries(test_x64_runtime PRIVATE rottr_core)
 target_compile_options(test_x64_runtime PRIVATE -Wall -Wextra -Werror)

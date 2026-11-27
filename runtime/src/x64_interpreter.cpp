@@ -83,7 +83,8 @@ struct RmOperand {
 };
 
 bool decodeRmOperand(Decoder& decoder, const rottr_cpu& cpu, uint8_t modrm,
-                     unsigned rexB, unsigned rexX, RmOperand& operand) {
+                     unsigned rexB, unsigned rexX, RmOperand& operand,
+                     uint64_t segBase = 0) {
     const unsigned mod = modrm >> 6U;
     const unsigned rm = modrm & 7U;
     if (mod == 3) {
@@ -128,7 +129,8 @@ bool decodeRmOperand(Decoder& decoder, const rottr_cpu& cpu, uint8_t modrm,
 
     if (ripRelative) base = decoder.next();
     operand.address = (hasBase || ripRelative ? base : 0) +
-                      (index << scale) + static_cast<uint64_t>(displacement);
+                      (index << scale) + static_cast<uint64_t>(displacement) +
+                      segBase;
     return true;
 }
 
@@ -236,8 +238,8 @@ struct RexPrefix {
 bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
                         Decoder& decoder, const RexPrefix& rex,
                         uint8_t opcode, size_t opSizeOverride,
-                        unsigned repPrefix, bool& ripUpdated,
-                        X64StopReason& stopReason) {
+                        unsigned repPrefix, uint64_t segBase,
+                        bool& ripUpdated, X64StopReason& stopReason) {
     ripUpdated = false;
     stopReason = X64StopReason::InvalidMemory;
     const bool rexW = rex.w;
@@ -272,7 +274,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
         return writeOperandSized(memory, cpu, rm, opSize, src);
     }
@@ -282,7 +284,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, src)) return false;
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
@@ -295,7 +297,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint8_t imm = 0;
         if (!decoder.immediate(imm)) return false;
         return writeOperandSized(memory, cpu, rm, 1, static_cast<uint64_t>(imm));
@@ -312,14 +314,12 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
 
     // ---- FF /2 (call r/m64) and FF /6 (push r/m64) ----
     if (opcode == 0xff) {
-        std::fprintf(stderr, "DEBUG: ff handler entered at 0x%llx\n", (unsigned long long)cpu.rip);
         uint8_t modrm = 0;
-        if (!decoder.byte(modrm)) { std::fprintf(stderr, "DEBUG: ff: modrm fetch failed\n"); return false; }
-        std::fprintf(stderr, "DEBUG: ff: modrm=0x%02x regField=%u\n", modrm, ((modrm >> 3) & 7));
+        if (!decoder.byte(modrm)) return false;
         const unsigned regField = (modrm >> 3) & 7;
         if (regField == 2) { // call r/m64
             RmOperand rm;
-            if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+            if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
             uint64_t target = 0;
             if (!readOperandSized(memory, cpu, rm, opSize, target)) return false;
             uint64_t returnAddr = decoder.next();
@@ -340,7 +340,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         }
         if (regField == 6) { // push r/m64
             RmOperand rm;
-            if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+            if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
             uint64_t value = 0;
             if (!readOperandSized(memory, cpu, rm, opSize, value)) return false;
             cpu.gpr[4] -= 8;
@@ -365,7 +365,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
@@ -380,7 +380,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = 0;
         readOperandSized(memory, cpu, rm, opSize, src);
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
@@ -396,7 +396,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, 1, dst)) return false;
@@ -411,7 +411,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = 0;
         if (!readOperandSized(memory, cpu, rm, 1, src)) return false;
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
@@ -427,7 +427,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
@@ -442,7 +442,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = 0;
         readOperandSized(memory, cpu, rm, opSize, src);
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
@@ -460,7 +460,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         if (!decoder.byte(modrm)) return false;
         const unsigned regField = (modrm >> 3) & 7;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         int8_t imm8 = 0;
         if (!decoder.immediate(imm8)) return false;
         int64_t imm = imm8;
@@ -487,7 +487,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
         uint64_t dst = 0;
         readOperandSized(memory, cpu, rm, opSize, dst);
@@ -501,7 +501,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = 0;
         readOperandSized(memory, cpu, rm, opSize, src);
         uint64_t dst = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
@@ -515,7 +515,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
@@ -530,7 +530,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = 0;
         readOperandSized(memory, cpu, rm, opSize, src);
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
@@ -546,7 +546,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
@@ -561,7 +561,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = 0;
         readOperandSized(memory, cpu, rm, opSize, src);
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
@@ -577,7 +577,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
@@ -661,7 +661,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         if (!decoder.byte(modrm)) return false;
         const unsigned regField = (modrm >> 3) & 7;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint8_t imm8 = 0;
         if (!decoder.immediate(imm8)) return false;
         uint64_t count = imm8 & 63;
@@ -690,7 +690,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         if (!decoder.byte(modrm)) return false;
         const unsigned regField = (modrm >> 3) & 7;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t count = (opcode == 0xd1) ? 1 : (cpu.gpr[1] & 63);
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
@@ -725,7 +725,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
         if (opcode2 == 0xb6) {
             uint64_t v = 0;
@@ -763,7 +763,7 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
-        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm)) return false;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
         int32_t v = 0;
         readOperandSized(memory, cpu, rm, 4, reinterpret_cast<uint64_t&>(v));
@@ -808,9 +808,6 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         if (!decoder.immediate(rel32)) return false;
         uint64_t returnAddr = decoder.next();
         uint64_t target = returnAddr + static_cast<int64_t>(rel32);
-        std::fprintf(stderr, "DEBUG: call direct target=0x%llx hostProc=%p\n",
-                (unsigned long long)target,
-                (void*)resolveHostCallProc(target));
         if (resolveHostCallProc(target) != nullptr) {
             cpu.gpr[4] -= 8;
             if (!writeGuest(memory, cpu.gpr[4], &returnAddr, 8)) return false;
@@ -860,9 +857,12 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         RexPrefix rex{};
         size_t opSizeOverride = 8; // default 64-bit
         unsigned repPrefix = 0; // 0 = none, 1 = F3 (REP/REPE/REPZ), 2 = F2 (REPNE/REPNZ)
-        // Legacy prefixes: 0x66 = operand-size override (16-bit)
-        while (first == 0x66 || first == 0xf2 || first == 0xf3) {
-            if (first == 0x66) opSizeOverride = 2;
+        unsigned gsOverride = 0; // 0 = none, 1 = GS (0x65)
+        // Legacy prefixes: 0x64 = FS, 0x65 = GS, 0x66 = operand-size override
+        while (first == 0x64 || first == 0x65 || first == 0x66 ||
+               first == 0xf2 || first == 0xf3) {
+            if (first == 0x64 || first == 0x65) gsOverride = 1;
+            else if (first == 0x66) opSizeOverride = 2;
             else if (first == 0xf2) repPrefix = 2;
             else if (first == 0xf3) repPrefix = 1;
             if (!decoder.byte(first)) {
@@ -889,10 +889,10 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
 
         bool ripUpdated = false;
         X64StopReason stopReason = X64StopReason::UnsupportedInstruction;
-        bool ok = executeInstruction(cpu, memory, decoder, rex, first, opSizeOverride, repPrefix, ripUpdated, stopReason);
+        uint64_t segBase = gsOverride ? cpu.gsBase : 0;
+        bool ok = executeInstruction(cpu, memory, decoder, rex, first, opSizeOverride,
+                                     repPrefix, segBase, ripUpdated, stopReason);
         if (!ok) {
-            std::fprintf(stderr, "DEBUG: executeInstruction failed at 0x%llx opcode=0x%02x stopReason=%d\n",
-                    (unsigned long long)instStart, first, (int)stopReason);
             result.reason = stopReason;
             result.faultAddress = instStart;
             break;

@@ -40,7 +40,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 12. ✅ Resolve imports by name and ordinal, with a trap for each missing one. **Pass:** calling a missing import logs DLL and function name and stops (`tests/test_pe_loader`, host).
 13. ✅ Parse exports, including forwarders. **Pass:** name, ordinal and forwarded lookups resolve (`tests/test_pe_loader`, host).
 14. Load guest DLLs with dependencies and reference counts. **Pass:** your EXE calls your DLL; a dependency cycle does not hang.
-15. Create PEB, TEB, stack and the GS base. **Pass:** `gs:[0x30]` returns the TEB and `gs:[0x60]` the PEB.
+15. ✅ Create PEB, TEB, stack and the GS base. **Pass:** gs:[0x30] returns TEB address, gs:[0x60] returns PEB address (`tests/test_win32_gs`, host). GS segment override (0x65) handled in x64 interpreter with gsBase field on rottr_cpu.
 16. Set up static TLS and TLS callbacks (build this test with the MSVC target). **Pass:** callback runs before entry; variable has its initial value.
 17. Call `DllMain` and entry points in dependency order. **Pass:** logged order matches the same program on Windows.
 18. ✅ Load your own import-free EXE whose entry returns 42. **Pass:** interpreter ends with RAX equal to 42 (`tests/test_pe_execute`, host).

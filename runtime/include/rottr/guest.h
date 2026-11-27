@@ -14,6 +14,7 @@ typedef struct {
     uint64_t gpr[16];
     uint64_t rip;
     uint64_t rflags;
+    uint64_t gsBase;   /* GS segment base (Windows TEB pointer) */
     ROTTR_ALIGNAS_16 uint8_t xmm[16][16];
 } rottr_cpu;
 
