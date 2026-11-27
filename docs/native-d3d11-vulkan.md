@@ -43,6 +43,16 @@ Added an actual Vulkan graphics-pipeline creation path:
 
 **Boundary:** this creates Vulkan pipeline objects, but does not yet connect D3D11 shader/resource bindings to descriptors, provide a ROTTR-compatible render pass/framebuffer, record game draw commands, or make draw()/drawIndexed() succeed. Those methods remain fail-closed. The renderer still owns a separate boot-screen render pass; no game pipeline is submitted to it.
 
+## Vulkan command recording and draw-call milestone
+
+- VulkanBackend::beginRenderPass starts a Vulkan command buffer and caller-provided compatible render pass/framebuffer, sets viewport/scissor, and binds the selected backend-owned graphics pipeline.
+- The D3D11 immediate context requires an explicitly selected graphics pipeline and forwards vertex/index buffer handles and offsets to the backend before drawing.
+- VulkanBackend::draw records a real vkCmdDraw; drawIndexed records a real vkCmdDrawIndexed after validating the active pass, pipeline, vertex buffer and index buffer.
+- endRenderPass ends the pass, submits the command buffer to the graphics queue and waits for completion. This first correctness path is synchronous.
+- Operations fail closed when no active pass, owned pipeline, or required buffers exist. Host fake-backend tests cover pipeline and buffer binding forwarding.
+
+**Boundary:** this is now a real Vulkan draw-command recording/submission path, not merely a command trace. It is still not connected to ROTTR's runtime: the Android build does not provision the translated game shader compiler, swapchain render pass/framebuffers are not yet passed into this backend, D3D11 descriptor/sampler/constant-buffer binding is incomplete, and no game draw stream is being produced. No ROTTR game frame is claimed.
+
 ## Not yet implemented
 
 - D3D11 COM object/device/context ABI and lifetime model.
