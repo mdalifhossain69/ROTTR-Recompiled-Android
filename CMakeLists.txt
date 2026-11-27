@@ -20,6 +20,7 @@ if(ANDROID)
     add_library(rottr_runtime STATIC
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/graphics.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/dxgi_vk_format.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/d3d11_device.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/audio/audio.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/input/input.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/input/touch_controls.cpp
@@ -68,6 +69,11 @@ add_executable(test_dxgi_vk_format tests/test_dxgi_vk_format.cpp runtime/src/gra
 target_include_directories(test_dxgi_vk_format PRIVATE runtime/src)
 target_compile_options(test_dxgi_vk_format PRIVATE -Wall -Wextra -Werror)
 add_test(NAME dxgi_vk_format COMMAND test_dxgi_vk_format)
+
+add_executable(test_d3d11_device tests/test_d3d11_device.cpp runtime/src/graphics/d3d11_device.cpp runtime/src/graphics/dxgi_vk_format.cpp)
+target_include_directories(test_d3d11_device PRIVATE runtime/src)
+target_compile_options(test_d3d11_device PRIVATE -Wall -Wextra -Werror)
+add_test(NAME d3d11_device COMMAND test_d3d11_device)
 
 find_package(Vulkan)
 if(Vulkan_FOUND)
