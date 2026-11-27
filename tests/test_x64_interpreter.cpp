@@ -49,6 +49,24 @@ int main() {
         !expect(result.instructionsExecuted == 2, "instruction count must be exact")) {
         return 1;
     }
+
+    // CALL rel32 into a local function; RET must return to the caller, not
+    // terminate the interpreter; the caller then executes HLT.
+    constexpr uint8_t callProgram[] = {
+        0xe8,0x01,0x00,0x00,0x00,0xf4,
+        0x48,0xb8,0x2a,0,0,0,0,0,0,0,0xc3
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(callProgram); ++i) memory[i] = callProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 8);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "nested RET must return to caller") ||
+        !expect(cpu.gpr[0] == 42, "called guest function must execute") ||
+        !expect(cpu.gpr[4] == 0x1080, "CALL/RET must balance guest stack")) {
+        return 1;
+    }
+
     std::puts("OK");
     return 0;
 }
