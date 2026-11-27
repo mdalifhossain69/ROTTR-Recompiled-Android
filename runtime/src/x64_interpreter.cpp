@@ -206,6 +206,43 @@ uint64_t add64(rottr_cpu& cpu, uint64_t left, uint64_t right) {
     return result;
 }
 
+
+uint64_t shift64(rottr_cpu& cpu, uint64_t value, unsigned count, unsigned operation) {
+    count &= 0x3fU;
+    if (count == 0) return value;
+
+    uint64_t result = value;
+    bool carry = false;
+    if (operation == 4 || operation == 6) { // SHL/SAL
+        carry = ((value >> (64U - count)) & 1U) != 0;
+        result = value << count;
+    } else if (operation == 5) { // SHR
+        carry = ((value >> (count - 1U)) & 1U) != 0;
+        result = value >> count;
+    } else if (operation == 7) { // SAR
+        carry = ((value >> (count - 1U)) & 1U) != 0;
+        result = value >> count;
+        if ((value >> 63U) != 0)
+            result |= (~uint64_t{0}) << (64U - count);
+    }
+
+    cpu.rflags &= ~(kFlagCarry | kFlagOverflow | kFlagZero |
+                    kFlagSign | kFlagParity);
+    if (carry) cpu.rflags |= kFlagCarry;
+    if (result == 0) cpu.rflags |= kFlagZero;
+    if ((result >> 63U) != 0) cpu.rflags |= kFlagSign;
+    if (evenParity(static_cast<uint8_t>(result))) cpu.rflags |= kFlagParity;
+    if (count == 1) {
+        bool overflow = false;
+        if (operation == 4 || operation == 6)
+            overflow = ((result >> 63U) != 0) != carry;
+        else if (operation == 5)
+            overflow = (value >> 63U) != 0;
+        if (overflow) cpu.rflags |= kFlagOverflow;
+    }
+    return result;
+}
+
 uint64_t sub64(rottr_cpu& cpu, uint64_t left, uint64_t right) {
     const uint64_t result = left - right;
     cpu.rflags &= ~kArithmeticFlags;
@@ -421,6 +458,43 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                                                X64StopReason::ReadOnlyMemory),
                             executed, destination.address,
                             "immediate arithmetic destination write failed");
+            cpu.rip = decoder.next();
+        } else if (opcode == 0xc1 || opcode == 0xd1 || opcode == 0xd3) {
+            if (!rexW)
+                return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
+                            "only 64-bit shift encodings are supported");
+            uint8_t modrm = 0;
+            if (!decoder.byte(modrm))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated shift ModRM");
+            RmOperand destination;
+            if (!decodeRmOperand(decoder, cpu, modrm, rexB, rexX, destination))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated shift address");
+            const unsigned operation = (modrm >> 3U) & 7U;
+            if (operation != 4 && operation != 5 && operation != 6 && operation != 7)
+                return stop(X64StopReason::UnsupportedInstruction, executed,
+                            instructionAddress, "unsupported shift group operation");
+            unsigned count = 1;
+            if (opcode == 0xc1) {
+                uint8_t immediate = 0;
+                if (!decoder.immediate(immediate))
+                    return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                                "truncated shift immediate");
+                count = immediate & 0x3fU;
+            } else if (opcode == 0xd3) {
+                count = static_cast<unsigned>(cpu.gpr[1] & 0x3fU);
+            }
+            uint64_t value = 0;
+            if (!readOperand(memory, cpu, destination, value))
+                return stop(X64StopReason::InvalidMemory, executed, destination.address,
+                            "shift destination read failed");
+            const uint64_t shifted = shift64(cpu, value, count, operation);
+            if (count != 0 && !writeOperand(memory, cpu, destination, shifted))
+                return stop(destination.isRegister ? X64StopReason::InvalidMemory :
+                            (memory.writable ? X64StopReason::InvalidMemory :
+                                               X64StopReason::ReadOnlyMemory),
+                            executed, destination.address, "shift destination write failed");
             cpu.rip = decoder.next();
         } else if (opcode == 0x89 || opcode == 0x8b ||
                    opcode == 0x01 || opcode == 0x03 || opcode == 0x29 ||
