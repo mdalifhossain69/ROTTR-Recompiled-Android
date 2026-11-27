@@ -103,6 +103,7 @@ public final class RuntimePackageInstaller {
                 throw new IOException("Cannot activate the imported runtime package");
             }
             deleteTree(backup);
+            syncFexBridge(context);
             success = true;
             return new InstallResult(expectedType, version, destination);
         } finally {
@@ -211,12 +212,36 @@ public final class RuntimePackageInstaller {
     public static String status(Context context) {
         File root = new File(context.getFilesDir(), "runtime-components");
         File proton = new File(root, "proton-arm64ec/profile.json");
-        File fex = new File(root, "fexcore-arm64ec/system32/libarm64ecfex.dll");
-        File wow = new File(root, "fexcore-arm64ec/system32/libwow64fex.dll");
+        File fex = new File(root, "runtime-prefix/drive_c/windows/system32/libarm64ecfex.dll");
+        File wow = new File(root, "runtime-prefix/drive_c/windows/system32/libwow64fex.dll");
         return "Proton ARM64EC package: " + (proton.isFile() ? "imported" : "missing")
                 + "\nFEXCore ARM64EC bridge: "
                 + (fex.isFile() && wow.isFile() ? "imported" : "missing")
                 + "\nExecution: not connected to Android process launcher";
+    }
+
+    private static void syncFexBridge(Context context) throws IOException {
+        File root = new File(context.getFilesDir(), "runtime-components");
+        File sourceRoot = new File(root, "fexcore-arm64ec/system32");
+        File sourceArm64ec = new File(sourceRoot, "libarm64ecfex.dll");
+        File sourceWow64 = new File(sourceRoot, "libwow64fex.dll");
+        if (!sourceArm64ec.isFile() || !sourceWow64.isFile()) return;
+
+        File targetRoot = new File(root, "runtime-prefix/drive_c/windows/system32");
+        if (!targetRoot.isDirectory() && !targetRoot.mkdirs()) {
+            throw new IOException("Cannot create Windows system32 directory for FEXCore");
+        }
+        copyFile(sourceArm64ec, new File(targetRoot, sourceArm64ec.getName()));
+        copyFile(sourceWow64, new File(targetRoot, sourceWow64.getName()));
+    }
+
+    private static void copyFile(File source, File destination) throws IOException {
+        try (InputStream in = new FileInputStream(source);
+             OutputStream out = new FileOutputStream(destination)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+        }
     }
 
     private static void deleteTree(File file) {
