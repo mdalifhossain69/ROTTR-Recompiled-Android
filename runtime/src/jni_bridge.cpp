@@ -29,6 +29,10 @@
 
 namespace {
 
+// Fixed game/render surface target. The Android view can scale this buffer to the display.
+constexpr int32_t kRenderWidth = 1280;
+constexpr int32_t kRenderHeight = 720;
+
 // These lines reach the ROTTR-logs file through the app's logcat capture.
 void log_line(bool isError, const char* message) {
     __android_log_write(isError ? ANDROID_LOG_ERROR : ANDROID_LOG_INFO, LOG_TAG, message);
@@ -69,6 +73,25 @@ void stop_rendering() {
 
 bool start_rendering(ANativeWindow* window) {
     g_window = window;  // takes over the caller's reference
+
+    // Set the native buffer size before creating the Vulkan Android surface. This keeps
+    // swapchain images at 720p instead of allocating full device-resolution buffers.
+    const int geometryResult = ANativeWindow_setBuffersGeometry(
+            window, kRenderWidth, kRenderHeight, 0);
+    if (geometryResult != 0) {
+        LOGE("ANativeWindow_setBuffersGeometry(1280x720) failed: %d", geometryResult);
+        stop_rendering();
+        return false;
+    }
+    const int32_t bufferWidth = ANativeWindow_getWidth(window);
+    const int32_t bufferHeight = ANativeWindow_getHeight(window);
+    LOGI("Locked native render buffer: %dx%d (target 1280x720)", bufferWidth, bufferHeight);
+    if (bufferWidth != kRenderWidth || bufferHeight != kRenderHeight) {
+        LOGE("Android did not apply the requested 1280x720 native buffer size");
+        stop_rendering();
+        return false;
+    }
+
     auto renderer = std::make_unique<rottr::VulkanRenderer>(log_line);
     const auto createSurface = [window](VkInstance instance, VkSurfaceKHR* surface) {
         VkAndroidSurfaceCreateInfoKHR info{};
@@ -77,8 +100,8 @@ bool start_rendering(ANativeWindow* window) {
         return vkCreateAndroidSurfaceKHR(instance, &info, nullptr, surface);
     };
     if (!renderer->init(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, createSurface,
-                        static_cast<uint32_t>(ANativeWindow_getWidth(window)),
-                        static_cast<uint32_t>(ANativeWindow_getHeight(window)))) {
+                        static_cast<uint32_t>(bufferWidth),
+                        static_cast<uint32_t>(bufferHeight))) {
         stop_rendering();
         return false;
     }
