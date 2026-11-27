@@ -215,6 +215,8 @@ bool writeOperandSized(const X64GuestMemory& memory, rottr_cpu& cpu,
     return true;
 }
 
+bool evenParity(uint8_t value);
+
 void setSizedLogicFlags(rottr_cpu& cpu, uint64_t result, size_t size) {
     const uint64_t mask = widthMask(size);
     const uint64_t sign = uint64_t{1} << (size * 8U - 1U);
@@ -737,7 +739,8 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                 }
             }
             cpu.rip = decoder.next();
-ortedInstruction, executed, instructionAddress,
+        } else {
+            return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
                         "instruction encoding is not implemented");
         }
 
