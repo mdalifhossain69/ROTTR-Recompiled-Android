@@ -221,3 +221,18 @@ ctest --preset linux-debug
 - `docs/milestone1-lift.md` — Milestone 1 details and exit criteria
 - `docs/phase1-report.md` — recorded executable report
 - `scripts/doctor.py` — build-tool readiness check
+
+---
+
+# Hidden Android runtime provisioning (2026-11-27)
+
+The ROTTR Play flow now provisions the compatibility packages without exposing a Winlator-style component manager:
+- Downloads Proton 10.0-4 ARM64EC from the GameNative component host.
+- Downloads FEXCore 2611-gn-8 ARM64EC from the GameNative component host.
+- Imports both WCP archives into app-private storage and stages the FEXCore bridge DLLs.
+- Uses Android DownloadManager notifications; the player does not need to browse for WCP files.
+- Runtime package state is not presented as a desktop/container UI.
+
+**Important:** this is automatic component provisioning only. The Android-native Windows process launcher, Wine/wineserver bootstrap, FEXCore execution bridge, and Direct3D-to-Vulkan path are not yet connected. ROTTR.exe is still inspected read-only; the app does not yet execute it. Do not describe this milestone as game boot or native gameplay.
+
+The exact Proton 10.0-6 package remains unavailable from the public catalog; 10.0-4 is used explicitly and is not mislabeled as 10.0-6.
