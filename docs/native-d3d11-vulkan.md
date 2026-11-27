@@ -40,4 +40,10 @@ Added `runtime/src/graphics/d3d11_device.*`:
 - `ImmediateContext` stores vertex/index/constant-buffer, shader-resource, render-target and topology bindings; validates draw and indexed-draw prerequisites/ranges; forwards draw/copy/update operations to the backend; and exposes a command trace for tests/diagnostics.
 - A fake backend test exercises resource creation, invalid descriptors, map/unmap, bounds checks, bindings, draw calls, copy/update, and lifetime cleanup.
 
-**Backend status:** this milestone defines the backend contract; it does not yet contain a concrete Vulkan implementation. The current Vulkan surface renderer is separate and clear-only. Device/context commands therefore cannot yet create Vulkan buffers/images or issue game draw calls. Next, implement a concrete Vulkan backend using the renderer's VkDevice/queue/command pool, add image memory/views and descriptors, then connect shader/pipeline state and DXBC translation.
+**Concrete Vulkan resource backend milestone:**
+- Added `runtime/src/graphics/vulkan_backend.*`, a `Backend` implementation constructed from borrowed `VkPhysicalDevice`, `VkDevice`, `VkQueue`, and queue-family handles owned by `VulkanRenderer`.
+- Creates real Vulkan buffers with host-visible/coherent memory, maps initial buffer bytes, supports bounded buffer uploads, and creates optimal-tiled Vulkan 2D images with device-local memory and image views.
+- Implements buffer-to-buffer copies through a dedicated transient command pool and synchronous queue submission.
+- Exposes the renderer's Vulkan handles as borrowed getters; the renderer must outlive the backend.
+
+**Explicit limitations:** this is not yet a complete D3D11 renderer. Texture initial-data upload and texture copies are intentionally rejected until per-subresource staging and image-layout tracking are implemented. Draw/draw-indexed fail closed because translated shaders, input layouts, render-pass compatibility, and graphics pipelines are not yet supplied. Resource state/layout tracking, descriptors, samplers, MSAA resolve, and actual game draw submission remain pending. No game frame is rendered by this milestone.
