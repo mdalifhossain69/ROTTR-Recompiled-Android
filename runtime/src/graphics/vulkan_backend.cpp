@@ -367,6 +367,23 @@ bool VulkanBackend::transitionTexture(uint64_t handle, VkImageLayout target) {
     std::fill(image.subresourceLayouts.begin(), image.subresourceLayouts.end(), target);
     return true;
 }
+VkShaderModule VulkanBackend::createShaderModule(const uint32_t* words, size_t wordCount) {
+    if (!words || wordCount < 5U || words[0] != 0x07230203U ||
+        wordCount > std::numeric_limits<size_t>::max() / sizeof(uint32_t)) return VK_NULL_HANDLE;
+    std::lock_guard<std::mutex> lock(mutex_);
+    VkShaderModuleCreateInfo info{}; info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    info.codeSize = wordCount * sizeof(uint32_t); info.pCode = words;
+    VkShaderModule module = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device_, &info, nullptr, &module) != VK_SUCCESS) return VK_NULL_HANDLE;
+    return module;
+}
+
+void VulkanBackend::destroyShaderModule(VkShaderModule module) {
+    if (module == VK_NULL_HANDLE) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    vkDestroyShaderModule(device_, module, nullptr);
+}
+
 // Draw needs a translated shader pair, input layout, render pass and pipeline state.
 // Fail closed until that pipeline state is supplied; never report a fake successful draw.
 bool VulkanBackend::draw(uint32_t, uint32_t, uint32_t, uint32_t) { return false; }
