@@ -10,7 +10,7 @@
 #include <vector>
 #include <chrono>
 #include <mutex>
-#include <thread>
+#include <thread>\n\n#if defined(__ANDROID__)\n#include <android/log.h>\n#define ROTTR_GFX_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "ROTTR-Graphics", __VA_ARGS__)\n#define ROTTR_GFX_LOGI(...) __android_log_print(ANDROID_LOG_INFO, "ROTTR-Graphics", __VA_ARGS__)\n#endif
 
 // Platform-specific includes for Android
 #if defined(__ANDROID__)
