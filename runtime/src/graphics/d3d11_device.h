@@ -92,7 +92,7 @@ private:
     std::shared_ptr<Backend> backend_;
     mutable std::mutex mutex_;
     uint64_t nextId_ = 1;
-    std::vector<std::weak_ptr<Resource>> resources_;
+    std::vector<ResourcePtr> resources_;
 };
 
 class ImmediateContext {
