@@ -31,6 +31,7 @@ private:
         ResourceKind kind = ResourceKind::Buffer;
         VkBuffer buffer = VK_NULL_HANDLE;
         VkImage image = VK_NULL_HANDLE;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkImageView view = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkDeviceSize size = 0;
