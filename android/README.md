@@ -1,50 +1,33 @@
-# Android release signing and updates
+# Android debug builds
 
-## Why Android rejected the update
+This repository intentionally builds and distributes **debug APKs only**. There is no release signing configuration, no release keystore requirement, and no release APK workflow.
 
-Android only permits an in-place update when the new APK is signed by the same signing certificate as the installed APK. A build type named `release` does not guarantee a stable key.
+## Build locally
 
-The previous CI workflow generated a brand-new release keystore on every run. That changes the signing certificate from build to build, so Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE (-7)` when a later APK is installed over an earlier one.
-
-## One-time GitHub setup
-
-Create one release keystore and keep it safe. Never commit it to this repository.
-
-For example, on a trusted computer:
+From the `android/` directory:
 
 ```bash
-keytool -genkeypair -v -keystore rottr-release.p12 -storetype PKCS12 -alias rottr -keyalg RSA -keysize 2048 -validity 10000
-base64 -w 0 rottr-release.p12
+./gradlew assembleDebug -PVERSION_CODE=1
 ```
 
-Add these repository Actions secrets under **Settings → Secrets and variables → Actions**:
+The APK is written to:
 
-- `RELEASE_KEYSTORE_BASE64`: the complete base64 output of that keystore
-- `KEYSTORE_PASSWORD`: the keystore password
-- `KEY_ALIAS`: `rottr` (or the alias you chose)
-- `KEY_PASSWORD`: the key password
-
-Keep a secure offline backup of the original keystore and passwords. Do not regenerate it for subsequent releases. If the original signing key is lost, APKs signed with a replacement key cannot update installations signed with the original key.
-
-The CI workflow now restores this same keystore for each release and fails rather than silently generating a new key. It also increments `versionCode` using the GitHub Actions run number.
-
-## Important: existing phone installation
-
-This repository cannot recover the signing key from an installed app. If the currently installed ROTTR APK was signed by one of the old randomly generated CI keys, you must obtain that exact old keystore to update it in place. If that keystore was not saved, Android will not accept a different key: back up any app data you need, uninstall the existing app once, then install a release built with the persistent keystore configured above. After that one-time transition, future releases using the same keystore can update in place.
-
-Do not uninstall if you still have the exact keystore that signed the installed APK; configure that key as the persistent secrets instead.
-
-## Local release build
-
-Use the same keystore and credentials as CI:
-
-```bash
-./gradlew assembleRelease \
-  -PVERSION_CODE=2 \
-  -PKEYSTORE_PATH=/secure/path/rottr-release.p12 \
-  -PKEYSTORE_PASSWORD='...' \
-  -PKEY_ALIAS=rottr \
-  -PKEY_PASSWORD='...'
+```
+android/build/outputs/apk/debug/
 ```
 
-Never put real passwords or keystore files in source control, logs, or chat. Increase `VERSION_CODE` for each locally distributed update.
+## GitHub Actions
+
+Run **Build ROTTR Android Debug APK** from the Actions tab. The workflow builds `assembleDebug`, verifies the APK signature, and uploads a `rottr-recomp-debug-apk` artifact. No repository secrets are required.
+
+GitHub-hosted runners are temporary, so the workflow caches its generated Android debug keystore under a fixed cache key. Successive manually dispatched builds can normally reuse the same debug signing certificate while that cache remains available. Pull-request builds may use a temporary key and should not be treated as update-compatible distribution builds.
+
+## Updating an existing installation
+
+Android permits an in-place update only when the signing certificate matches and the new APK has a compatible version code.
+
+The CI debug signing cache preserves the key for successive manual builds. GitHub Actions caches are not permanent storage; if the cache is deleted or evicted, the next CI build may receive a different debug certificate and Android may require a one-time uninstall/reinstall. Back up the CI debug keystore if guaranteed long-term update compatibility is required.
+
+The Android SDK's local debug keystore is separate from the GitHub Actions CI debug keystore. Local builds update installations signed with that same local key, not necessarily APKs downloaded from CI.
+
+Debug APKs are intended for development and testing, not public production distribution.
