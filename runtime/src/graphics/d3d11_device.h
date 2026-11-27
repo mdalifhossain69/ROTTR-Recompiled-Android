@@ -67,6 +67,9 @@ public:
     virtual void destroyResource(uint64_t handle) = 0;
     virtual bool uploadBuffer(uint64_t handle, uint32_t offset, const void*, uint32_t size) = 0;
     virtual bool copyResource(uint64_t dst, uint64_t src) = 0;
+    virtual bool bindGraphicsPipeline(uint64_t) { return false; }
+    virtual bool bindVertexBuffer(uint32_t, uint64_t, uint32_t, uint32_t) { return false; }
+    virtual bool bindIndexBuffer(uint64_t, IndexFormat, uint32_t) { return false; }
     virtual bool draw(uint32_t vertexCount, uint32_t startVertex,
                       uint32_t instanceCount, uint32_t startInstance) = 0;
     virtual bool drawIndexed(uint32_t indexCount, uint32_t startIndex,
@@ -104,6 +107,7 @@ public:
     void setShaderResource(uint32_t slot, ResourcePtr texture);
     void setRenderTarget(ResourcePtr texture);
     void setTopology(PrimitiveTopology topology);
+    bool setGraphicsPipeline(uint64_t pipeline);
     bool draw(uint32_t vertexCount, uint32_t startVertex = 0,
               uint32_t instanceCount = 1, uint32_t startInstance = 0);
     bool drawIndexed(uint32_t indexCount, uint32_t startIndex = 0,
@@ -128,6 +132,7 @@ private:
     IndexFormat indexFormat_ = IndexFormat::UInt16;
     uint32_t indexOffset_ = 0;
     PrimitiveTopology topology_ = PrimitiveTopology::Undefined;
+    uint64_t graphicsPipeline_ = 0;
     std::vector<DrawCommand> commands_;
     uint64_t drawCalls_ = 0;
 };
