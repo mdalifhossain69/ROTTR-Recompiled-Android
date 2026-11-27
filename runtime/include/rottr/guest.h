@@ -4,6 +4,7 @@
 
 #ifdef __cplusplus
 #define ROTTR_ALIGNAS_16 alignas(16)
+extern "C" {
 #else
 #define ROTTR_ALIGNAS_16 _Alignas(16)
 #endif
@@ -18,5 +19,8 @@ typedef struct {
 
 void rottr_cpu_reset(rottr_cpu *cpu, uint64_t entry, uint64_t stack_top);
 
+#ifdef __cplusplus
+}
+#endif
 #undef ROTTR_ALIGNAS_16
 #endif
