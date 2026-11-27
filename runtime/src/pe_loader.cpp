@@ -228,6 +228,31 @@ PeLoadError PeImage::load(rottr_guest_mem* memory, const uint8_t* file, size_t f
                           const PeLoadOptions& options) {
     reset();
     if (memory == nullptr) return PeLoadError::AllocationFailed;
+    // Step 15: PEB/TEB/GS base setup
+    uintptr_t pebBase = 0;
+    uintptr_t tebBase = 0;
+    if (options.setupPEBTEB) {
+        // Allocate PEB (Process Environment Block)
+        size_t pebSize = 0x1000;  // 4 KB page
+        pebBase = reinterpret_cast<uintptr_t>(rottr_guest_reserve_region(memory, nullptr, pebSize));
+        if (pebBase != 0) {
+            // Commit PEB page
+            if (rottr_guest_commit_pages(memory, pebBase, pebSize) != 0) {
+                pebBase = 0;
+            }
+        }
+        
+        // Allocate TEB (Thread Environment Block)
+        size_t tebSize = 0x1000;
+        tebBase = reinterpret_cast<uintptr_t>(rottr_guest_reserve_region(memory, nullptr, tebSize));
+        if (tebBase != 0) {
+            // Commit TEB page
+            if (rottr_guest_commit_pages(memory, tebBase, tebSize) != 0) {
+                tebBase = 0;
+            }
+        }
+    }
+
 
     // Step 15: PEB/TEB/GS base setup
     uintptr_t pebBase = 0;
