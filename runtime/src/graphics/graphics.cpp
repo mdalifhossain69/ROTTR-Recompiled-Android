@@ -10,7 +10,13 @@
 #include <vector>
 #include <chrono>
 #include <mutex>
-#include <thread>\n\n#if defined(__ANDROID__)\n#include <android/log.h>\n#define ROTTR_GFX_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "ROTTR-Graphics", __VA_ARGS__)\n#define ROTTR_GFX_LOGI(...) __android_log_print(ANDROID_LOG_INFO, "ROTTR-Graphics", __VA_ARGS__)\n#endif
+#include <thread>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define ROTTR_GFX_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "ROTTR-Graphics", __VA_ARGS__)
+#define ROTTR_GFX_LOGI(...) __android_log_print(ANDROID_LOG_INFO, "ROTTR-Graphics", __VA_ARGS__)
+#endif
 
 // Platform-specific includes for Android
 #if defined(__ANDROID__)
@@ -485,6 +491,13 @@ extern "C" bool graphics_present(void) {
     // Phase 6: Frame pacing
     frame_pacing();
 
+#if defined(__ANDROID__)
+    static bool presentWarningLogged = false;
+    if (!presentWarningLogged) {
+        ROTTR_GFX_LOGE("graphics_present has no Vulkan acquire/submit/present implementation");
+        presentWarningLogged = true;
+    }
+#endif
 #if defined(__ANDROID__)
     static bool presentWarningLogged = false;
     if (!presentWarningLogged) {
