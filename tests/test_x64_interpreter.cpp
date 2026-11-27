@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 bool expect(bool condition, const char* message) {
@@ -66,6 +67,34 @@ int main() {
                 "nested RET must return to caller") ||
         !expect(cpu.gpr[0] == 42, "called guest function must execute") ||
         !expect(cpu.gpr[4] == 0x1080, "CALL/RET must balance guest stack")) {
+        return 1;
+    }
+
+    // Memory MOV plus ModRM/SIB addressing: [RBX], [RBX + RSI*4 + 8].
+    constexpr uint8_t memoryProgram[] = {
+        0x48,0xbb,0xd0,0x10,0,0,0,0,0,0, // mov rbx, 0x10d0
+        0x48,0xb9,5,0,0,0,0,0,0,0,       // mov rcx, 5
+        0x48,0x89,0x0b,                   // mov [rbx], rcx
+        0x48,0x01,0x0b,                   // add [rbx], rcx
+        0x48,0xbe,2,0,0,0,0,0,0,0,       // mov rsi, 2
+        0x48,0x01,0x4c,0xb3,0x08,         // add [rbx+rsi*4+8], rcx
+        0x48,0x8b,0x13,                   // mov rdx, [rbx]
+        0x48,0x8b,0x54,0xb3,0x08,         // mov rdx, [rbx+rsi*4+8]
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(memoryProgram); ++i) memory[i] = memoryProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 32);
+    uint64_t plainMemory = 0;
+    uint64_t indexedMemory = 0;
+    std::memcpy(&plainMemory, memory.data() + 0xd0, sizeof(plainMemory));
+    std::memcpy(&indexedMemory, memory.data() + 0xe0, sizeof(indexedMemory));
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "memory MOV and arithmetic must reach HLT") ||
+        !expect(plainMemory == 10, "base-addressed memory arithmetic must store 10") ||
+        !expect(indexedMemory == 5, "SIB scale/index/displacement must address correct memory") ||
+        !expect(cpu.gpr[2] == 5, "SIB memory load must populate RDX")) {
         return 1;
     }
 
