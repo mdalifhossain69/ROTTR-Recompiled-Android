@@ -258,8 +258,7 @@ bool VulkanBackend::copyResource(uint64_t dst, uint64_t src) {
     if (dstImage.width != srcImage.width || dstImage.height != srcImage.height ||
         dstImage.mipLevels != srcImage.mipLevels || dstImage.arraySize != srcImage.arraySize ||
         dstImage.format != srcImage.format || dstImage.samples != srcImage.samples ||
-        dstImage.subresourceLayouts.size() != srcImage.subresourceLayouts.size() ||
-        dstImage.samples != VK_SAMPLE_COUNT_1_BIT) return false;
+        dstImage.subresourceLayouts.size() != srcImage.subresourceLayouts.size()) return false;
 
     const uint32_t count = dstImage.mipLevels * dstImage.arraySize;
     std::vector<VkImageMemoryBarrier> toTransfer;
@@ -297,7 +296,13 @@ bool VulkanBackend::copyResource(uint64_t dst, uint64_t src) {
             region.srcSubresource = {srcImage.aspect, mip, layer, 1};
             region.dstSubresource = {dstImage.aspect, mip, layer, 1};
             region.extent = {std::max(1U, srcImage.width >> mip), std::max(1U, srcImage.height >> mip), 1};
-            regions.push_back(region);
+            // Vulkan copy regions select exactly one aspect for depth/stencil images.
+            if ((srcImage.aspect & VK_IMAGE_ASPECT_DEPTH_BIT) != 0)
+                { region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT; region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT; regions.push_back(region); }
+            if ((srcImage.aspect & VK_IMAGE_ASPECT_STENCIL_BIT) != 0)
+                { region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT; region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT; regions.push_back(region); }
+            if ((srcImage.aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) == 0)
+                regions.push_back(region);
 
             if (srcOld != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
                 srcBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
