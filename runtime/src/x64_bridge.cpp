@@ -1,5 +1,6 @@
 #include "rottr/x64_bridge.h"
 
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 
@@ -139,30 +140,21 @@ bool callGuestProc(uint64_t handle, rottr_cpu& cpu,
     const uint64_t kBudget = 4096;
     while (true) {
         auto result = runX64Interpreter(cpu, memory, kBudget);
-        if (result.reason == rottr::X64StopReason::Returned) {
-            // Guest executed RET (interpreter stops before popping). The
-            // sentinel is still at [RSP].
-            uint64_t retAddr = 0;
-            uint64_t rsp = cpu.gpr[4];
-            if (rsp < memory.base || rsp - memory.base + 8 > memory.size)
-                return false;
-            std::memcpy(&retAddr, memory.data + (rsp - memory.base), 8);
-            if (retAddr == kReturnSentinel) {
-                // Pop the sentinel and capture the return value.
-                cpu.gpr[4] += 8;
-                outResult = cpu.gpr[0]; // RAX
-                return true;
-            }
-            // Real return address - continue? For now treat as done.
-            outResult = cpu.gpr[0];
-            return true;
-        }
         if (result.reason == rottr::X64StopReason::Halted) {
             outResult = cpu.gpr[0];
             return true;
         }
-        if (result.reason == rottr::X64StopReason::UnsupportedInstruction ||
-            result.reason == rottr::X64StopReason::InvalidMemory) {
+        if (result.reason == rottr::X64StopReason::InvalidMemory) {
+            // RET to sentinel: RET jumped RIP to the sentinel address, then
+            // the next instruction fetch faulted. RSP was already popped by
+            // RET; capture RAX.
+            if (cpu.rip == kReturnSentinel) {
+                outResult = cpu.gpr[0];
+                return true;
+            }
+            return false;
+        }
+        if (result.reason == rottr::X64StopReason::UnsupportedInstruction) {
             return false;
         }
         // Budget exhausted; continue running.

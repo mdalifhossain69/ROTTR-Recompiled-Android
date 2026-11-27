@@ -40,26 +40,22 @@ constexpr std::array<uint8_t, 7> kGuestAddCode = {
 int main() {
     // ---- Step 29: guest-to-host call bridge ----
     // Reserve guest memory first so we know the base for code generation.
-    rottr_guest_mem* mem = rottr_guest_reserve(4096);
+    rottr_guest_mem* mem = rottr_guest_reserve(0x4000);
     if (!expect(mem != nullptr, "guest reserve")) return 1;
     uintptr_t base = (uintptr_t)rottr_guest_base(mem);
-    rottr_guest_commit_pages(mem, base, 4096);
+    rottr_guest_commit_pages(mem, base, 0x4000);
 
     // Register host_add as a host-call proc.
     uint64_t addAddr = rottr::addHostCallProc(reinterpret_cast<rottr::HostProc>(&host_add));
     uint64_t stackAddr = rottr::addHostCallProc(
         reinterpret_cast<rottr::HostProc>(&host_stack_arg));
 
-    // Write host call addresses into guest memory for indirect calls.
-    uintptr_t addPtrAddr = base + 0x1000;
-    uintptr_t stackPtrAddr = base + 0x1008;
-    rottr_guest_write(mem, addPtrAddr, &addAddr, 8);
-    rottr_guest_write(mem, stackPtrAddr, &stackAddr, 8);
-
     // Build a tiny guest program:
-    //   mov rcx, 3; mov rdx, 4; call [addPtrAddr]; hlt
+    //   mov rax, <addAddr>; call rax; hlt          -> host_add(3,4) = 7
+    //   mov rax, <stackAddr>; hlt                   -> (just to use it)
+    // Second program:
     //   mov rcx, 10; mov rdx, 20; mov r8, 30; mov r9, 40;
-    //   push 100; call [stackPtrAddr]; hlt
+    //   mov rax, <stackAddr>; push 100; call rax; hlt -> host_stack_arg(10,20,30,40,100) = 100
     constexpr std::size_t kCodeSize = 256;
     std::vector<uint8_t> code(kCodeSize, 0);
     std::size_t pc = 0;
@@ -67,43 +63,39 @@ int main() {
     // Helper to emit
     auto emit = [&](uint8_t b) { code[pc++] = b; };
 
-    // mov rcx, 3  (48 b9 03 00 00 00 00 00 00 00)
+    // mov rcx, 3
     emit(0x48); emit(0xb9);
-    for (int i = 0; i < 8; ++i) emit((3 >> (i * 8)) & 0xff);
-    // mov rdx, 4  (48 ba 04 ...)
+    for (int i = 0; i < 8; ++i) emit((uint8_t)(((uint64_t)3 >> (i * 8)) & 0xff));
+    // mov rdx, 4
     emit(0x48); emit(0xba);
-    for (int i = 0; i < 8; ++i) emit((4 >> (i * 8)) & 0xff);
-    // call [rip + disp32]  (FF 15 <disp32>)
-    {
-        emit(0xff); emit(0x15);
-        // disp32 = addPtrAddr - (address of next instruction)
-        // next instruction is at base + pc + 6 (pc is offset from base)
-        int64_t disp = (int64_t)addPtrAddr - (int64_t)(base + pc + 6);
-        for (int i = 0; i < 4; ++i) emit((uint8_t)((disp >> (i * 8)) & 0xff));
-    }
+    for (int i = 0; i < 8; ++i) emit((uint8_t)(((uint64_t)4 >> (i * 8)) & 0xff));
+    // mov rax, addAddr
+    emit(0x48); emit(0xb8);
+    for (int i = 0; i < 8; ++i) emit((uint8_t)((addAddr >> (i * 8)) & 0xff));
+    // call rax (FF D0)
+    emit(0xff); emit(0xd0);
     // hlt
     emit(0xf4);
 
     // mov rcx, 10
     emit(0x48); emit(0xb9);
-    for (int i = 0; i < 8; ++i) emit((10 >> (i * 8)) & 0xff);
+    for (int i = 0; i < 8; ++i) emit((uint8_t)(((uint64_t)10 >> (i * 8)) & 0xff));
     // mov rdx, 20
     emit(0x48); emit(0xba);
-    for (int i = 0; i < 8; ++i) emit((20 >> (i * 8)) & 0xff);
+    for (int i = 0; i < 8; ++i) emit((uint8_t)(((uint64_t)20 >> (i * 8)) & 0xff));
     // mov r8, 30
     emit(0x49); emit(0xb8);
-    for (int i = 0; i < 8; ++i) emit((30 >> (i * 8)) & 0xff);
+    for (int i = 0; i < 8; ++i) emit((uint8_t)(((uint64_t)30 >> (i * 8)) & 0xff));
     // mov r9, 40
     emit(0x49); emit(0xb9);
-    for (int i = 0; i < 8; ++i) emit((40 >> (i * 8)) & 0xff);
+    for (int i = 0; i < 8; ++i) emit((uint8_t)(((uint64_t)40 >> (i * 8)) & 0xff));
     // push 100 (stack arg #5)
-    emit(0x6a); emit(100);
-    // call [rip + disp32]
-    {
-        emit(0xff); emit(0x15);
-        int64_t disp = (int64_t)stackPtrAddr - (int64_t)(pc + 4);
-        for (int i = 0; i < 4; ++i) emit((uint8_t)((disp >> (i * 8)) & 0xff));
-    }
+    emit(0x6a); emit((uint8_t)100);
+    // mov rax, stackAddr
+    emit(0x48); emit(0xb8);
+    for (int i = 0; i < 8; ++i) emit((uint8_t)((stackAddr >> (i * 8)) & 0xff));
+    // call rax
+    emit(0xff); emit(0xd0);
     // hlt
     emit(0xf4);
 
@@ -114,7 +106,7 @@ int main() {
     rottr_cpu_reset(&cpu, base, base + 4096);
 
     rottr::X64GuestMemory guest{
-        base, reinterpret_cast<uint8_t*>(rottr_guest_base(mem)), 4096, true, true};
+        base, reinterpret_cast<uint8_t*>(rottr_guest_base(mem)), 0x4000, true, true};
     rottr_mem_result r;
     rottr_guest_translate(mem, base, 4096, &r);
     guest.data = static_cast<uint8_t*>(r.host);
