@@ -238,6 +238,49 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                     (opcode == 0x75 && (cpu.rflags & kFlagZero) == 0);
             cpu.rip = take ? decoder.next() + static_cast<int64_t>(displacement) :
                              decoder.next();
+        } else if (opcode == 0x81 || opcode == 0x83) {
+            if (!rexW)
+                return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
+                            "only 64-bit immediate arithmetic encodings are supported");
+            uint8_t modrm = 0;
+            if (!decoder.byte(modrm))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated immediate arithmetic ModRM");
+            if ((modrm >> 6U) != 3)
+                return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
+                            "memory operands are not supported by immediate arithmetic");
+            const unsigned operation = (modrm >> 3U) & 7U;
+            const unsigned destination = (modrm & 7U) | (rexB << 3U);
+            int64_t signedImmediate = 0;
+            if (opcode == 0x83) {
+                int8_t value = 0;
+                if (!decoder.immediate(value))
+                    return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                                "truncated sign-extended imm8");
+                signedImmediate = value;
+            } else {
+                int32_t value = 0;
+                if (!decoder.immediate(value))
+                    return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                                "truncated sign-extended imm32");
+                signedImmediate = value;
+            }
+            const uint64_t left = reg(cpu, destination);
+            const uint64_t right = static_cast<uint64_t>(signedImmediate);
+            switch (operation) {
+                case 0: reg(cpu, destination) = add64(cpu, left, right); break;
+                case 5: reg(cpu, destination) = sub64(cpu, left, right); break;
+                case 6:
+                    reg(cpu, destination) = left ^ right;
+                    setLogicFlags(cpu, reg(cpu, destination));
+                    break;
+                case 7: (void) sub64(cpu, left, right); break;
+                default:
+                    return stop(X64StopReason::UnsupportedInstruction, executed,
+                                instructionAddress,
+                                "immediate arithmetic group operation is not implemented");
+            }
+            cpu.rip = decoder.next();
         } else if (opcode == 0x01 || opcode == 0x03 || opcode == 0x29 ||
                    opcode == 0x2b || opcode == 0x31 || opcode == 0x33 ||
                    opcode == 0x39 || opcode == 0x3b) {
