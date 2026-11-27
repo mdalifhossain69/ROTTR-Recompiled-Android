@@ -24,7 +24,7 @@ android {
         applicationId "com.rottr.recomp"
         minSdk 31
         targetSdk 34
-        versionCode 1
+        versionCode (project.findProperty('VERSION_CODE') ?: '1').toString().toInteger()
         versionName "1.0"
         
         // Native library configuration
@@ -43,13 +43,19 @@ android {
 
     signingConfigs {
         release {
-            if (project.hasProperty('KEYSTORE_PATH') && project.hasProperty('KEYSTORE_PASSWORD') &&
-                project.hasProperty('KEY_ALIAS') && project.hasProperty('KEY_PASSWORD')) {
-                storeFile file(project.property('KEYSTORE_PATH'))
-                storePassword project.property('KEYSTORE_PASSWORD')
-                keyAlias project.property('KEY_ALIAS')
-                keyPassword project.property('KEY_PASSWORD')
+            def requiredSigningProperties = ['KEYSTORE_PATH', 'KEYSTORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD']
+            def missingSigningProperties = requiredSigningProperties.findAll { !project.hasProperty(it) || project.property(it).toString().trim().isEmpty() }
+            if (!missingSigningProperties.isEmpty()) {
+                throw new GradleException("Release signing is not configured. Missing: ${missingSigningProperties.join(', ')}. Use the persistent ROTTR release keystore.")
             }
+            def releaseKeystore = file(project.property('KEYSTORE_PATH'))
+            if (!releaseKeystore.isFile()) {
+                throw new GradleException("Release keystore does not exist: ${releaseKeystore}")
+            }
+            storeFile releaseKeystore
+            storePassword project.property('KEYSTORE_PASSWORD')
+            keyAlias project.property('KEY_ALIAS')
+            keyPassword project.property('KEY_PASSWORD')
         }
     }
 
@@ -57,9 +63,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            if (project.hasProperty('KEYSTORE_PATH')) {
-                signingConfig signingConfigs.release
-            }
+            signingConfig signingConfigs.release
         }
         debug {
             debuggable true
