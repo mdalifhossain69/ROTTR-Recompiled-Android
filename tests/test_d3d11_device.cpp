@@ -11,12 +11,15 @@ using namespace rottr::gfx::d3d11;
 class FakeBackend final : public Backend {
 public:
     uint64_t next = 1;
-    uint32_t draws = 0, indexed = 0, uploads = 0, copies = 0, destroys = 0;
+    uint32_t draws = 0, indexed = 0, uploads = 0, copies = 0, destroys = 0, pipelineBinds = 0, vertexBinds = 0, indexBinds = 0;
     bool createBuffer(const BufferDesc&, const void*, uint64_t& h) override { h = next++; return true; }
     bool createTexture2D(const Texture2DDesc&, const SubresourceData*, uint64_t& h) override { h = next++; return true; }
     void destroyResource(uint64_t) override { ++destroys; }
     bool uploadBuffer(uint64_t, uint32_t, const void*, uint32_t) override { ++uploads; return true; }
     bool copyResource(uint64_t, uint64_t) override { ++copies; return true; }
+    bool bindGraphicsPipeline(uint64_t p) override { ++pipelineBinds; return p != 0; }
+    bool bindVertexBuffer(uint32_t, uint64_t, uint32_t, uint32_t) override { ++vertexBinds; return true; }
+    bool bindIndexBuffer(uint64_t, IndexFormat, uint32_t) override { ++indexBinds; return true; }
     bool draw(uint32_t, uint32_t, uint32_t, uint32_t) override { ++draws; return true; }
     bool drawIndexed(uint32_t, uint32_t, int32_t, uint32_t) override { ++indexed; return true; }
 };
@@ -38,6 +41,7 @@ int main() {
         ImmediateContext context(device);
         assert(!context.draw(3));
         context.setTopology(PrimitiveTopology::TriangleList);
+        assert(context.setGraphicsPipeline(99));
         context.setVertexBuffer(0, vertex, 16, 0);
         context.setConstantBuffer(0, constant);
         assert(context.draw(3));
@@ -46,6 +50,7 @@ int main() {
         assert(!context.drawIndexed(1000));
         assert(context.drawCalls() == 2);
         assert(backend->draws == 1 && backend->indexed == 1);
+        assert(backend->pipelineBinds == 1 && backend->vertexBinds == 2 && backend->indexBinds == 1);
 
         uint8_t bytes[8] = {1,2,3,4,5,6,7,8};
         assert(context.updateSubresource(vertex, 4, bytes, sizeof(bytes)));
