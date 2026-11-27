@@ -98,6 +98,47 @@ int main() {
         return 1;
     }
 
+    // Near JZ (0F 84 rel32) must take the branch after equal CMP.
+    constexpr uint8_t nearBranchProgram[] = {
+        0x48,0xb8,5,0,0,0,0,0,0,0,
+        0x48,0xb9,5,0,0,0,0,0,0,0,
+        0x48,0x39,0xc8,
+        0x0f,0x84,0x01,0,0,0,
+        0xf4,0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(nearBranchProgram); ++i) memory[i] = nearBranchProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 32);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "near conditional branch must reach HLT") ||
+        !expect(cpu.rip == 0x101f, "near JZ must branch to the second HLT")) {
+        return 1;
+    }
+
+    // Register OR, AND, and TEST exercise logical result and flag behavior.
+    constexpr uint8_t logicalProgram[] = {
+        0x48,0xb8,0xf0,0,0,0,0,0,0,0,
+        0x48,0xb9,0x0f,0,0,0,0,0,0,0,
+        0x48,0x09,0xc8, // or rax, rcx => ff
+        0x48,0x21,0xc8, // and rax, rcx => 0f
+        0x48,0x85,0xc8, // test rax, rcx => nonzero
+        0x48,0x31,0xc9, // xor rcx, rcx
+        0x48,0x85,0xc8, // test rax, rcx => zero
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(logicalProgram); ++i) memory[i] = logicalProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 32);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "logical instructions must reach HLT") ||
+        !expect(cpu.gpr[0] == 0x0f, "OR and AND must produce the expected RAX") ||
+        !expect((cpu.rflags & (1ULL << 6)) != 0,
+                "TEST with zero intersection must set ZF")) {
+        return 1;
+    }
+
     std::puts("OK");
     return 0;
 }
