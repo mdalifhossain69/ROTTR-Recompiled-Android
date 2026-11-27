@@ -1,262 +1,456 @@
 package com.rottr.recomp;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.SharedPreferences;
+import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Environment;
+import android.provider.DocumentsContract;
+import android.text.TextUtils;
+import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.InputDevice;
 import android.view.View;
-import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
-import android.widget.Spinner;
-import android.widget.ArrayAdapter;
+import android.widget.TextClock;
 import android.widget.TextView;
 
-/** First-run ROTTR launcher screen. Settings are persisted by the host Activity. */
+/**
+ * First-run launcher screen.
+ *
+ * Every size below is in the units of the 1376x768 design mockup. The whole control
+ * layer is scaled to the display, so it keeps its proportions and never needs scrolling.
+ */
 public final class LauncherScreen extends FrameLayout {
     public interface Listener {
         void onChooseGameFolder();
         void onPlay();
         void onSettings();
+        void onStorageCheck();
     }
+
+    private static final String PREFS = "rottr_launcher";
+    private static final float DESIGN_W = 1376f;
+    private static final float DESIGN_H = 768f;
+    private static final int GOLD = Color.rgb(205, 158, 76);
+    private static final int PALE = Color.rgb(226, 232, 238);
 
     private final Activity activity;
     private final Listener listener;
+    private final FrameLayout stage;
     private TextView folderPath;
+    private TextView controllerStatus;
     private TextView storageStatus;
-    private final int gold = Color.rgb(218, 165, 74);
-    private final int pale = Color.rgb(235, 240, 246);
+
+    private final Runnable controllerPoll = new Runnable() {
+        @Override public void run() {
+            updateControllerStatus();
+            postDelayed(this, 2000);
+        }
+    };
 
     public LauncherScreen(Activity activity, Listener listener, Uri folder) {
         super(activity);
         this.activity = activity;
         this.listener = listener;
-        setBackgroundColor(Color.rgb(8, 18, 29));
+        setBackgroundColor(Color.rgb(6, 12, 20));
 
-        addView(new Backdrop(activity), new FrameLayout.LayoutParams(
-                LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        ImageView art = new ImageView(activity);
+        art.setImageResource(R.drawable.launcher_background);
+        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        addView(art, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
-        LinearLayout root = new LinearLayout(activity);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(10), dp(18), dp(12));
-        addView(root, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        // Darkens the left side so the artwork fades smoothly behind the settings panel.
+        View shade = new View(activity);
+        shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xAA050B12, 0x66050B12, 0x00050B12, 0x00050B12}));
+        addView(shade, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
-        LinearLayout top = new LinearLayout(activity);
-        top.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-        top.setPadding(dp(8), dp(4), dp(8), dp(8));
-        TextView controller = topItem("◉  CONTROLLER  CHECK");
-        storageStatus = topItem("▤  STORAGE CHECK");
-        TextView settings = topItem("⚙");
-        settings.setTextSize(22);
-        settings.setOnClickListener(v -> listener.onSettings());
-        top.addView(controller);
-        top.addView(storageStatus);
-        top.addView(settings);
-        TextView clock = topItem(android.text.format.DateFormat.format("HH:mm", System.currentTimeMillis()).toString());
-        top.addView(clock);
-        root.addView(top, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(42)));
+        stage = new FrameLayout(activity);
+        stage.setClipChildren(false);
+        addView(stage, new LayoutParams((int) DESIGN_W, (int) DESIGN_H));
+        setClipChildren(false);
 
-        LinearLayout body = new LinearLayout(activity);
-        body.setOrientation(LinearLayout.HORIZONTAL);
-        body.setGravity(Gravity.CENTER_VERTICAL);
-        root.addView(body, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f));
+        buildTopBar();
+        buildPanel();
+        buildPlayButton();
+        setFolder(folder);
+        refreshStatus();
+    }
 
+    @Override protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        super.onLayout(changed, left, top, right, bottom);
+        int width = right - left;
+        int height = bottom - top;
+        if (width <= 0 || height <= 0) return;
+        float scale = Math.min(width / DESIGN_W, height / DESIGN_H);
+        int stageW = Math.round(width / scale);
+        int stageH = Math.round(height / scale);
+        stage.measure(MeasureSpec.makeMeasureSpec(stageW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(stageH, MeasureSpec.EXACTLY));
+        stage.layout(0, 0, stageW, stageH);
+        stage.setPivotX(0);
+        stage.setPivotY(0);
+        stage.setScaleX(scale);
+        stage.setScaleY(scale);
+    }
+
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        post(controllerPoll);
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        removeCallbacks(controllerPoll);
+        super.onDetachedFromWindow();
+    }
+
+    private void buildTopBar() {
+        LinearLayout bar = new LinearLayout(activity);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(30, 0, 24, 0);
+        GradientDrawable glass = box(0x99283644, 0x667F93A6, 1, 0);
+        glass.setCornerRadii(new float[]{0, 0, 0, 0, 0, 0, 18, 18});
+        bar.setBackground(glass);
+
+        controllerStatus = barItem(R.drawable.ic_gamepad, "CONTROLLER CHECK");
+        bar.addView(controllerStatus, wrap(0, 28));
+        storageStatus = barItem(R.drawable.ic_storage, "STORAGE CHECK");
+        storageStatus.setOnClickListener(v -> listener.onStorageCheck());
+        bar.addView(storageStatus, wrap(0, 28));
+
+        ImageView gear = new ImageView(activity);
+        gear.setImageResource(R.drawable.ic_gear);
+        gear.setContentDescription("Settings");
+        gear.setPadding(6, 6, 6, 6);
+        gear.setOnClickListener(v -> listener.onSettings());
+        LinearLayout.LayoutParams gearLp = new LinearLayout.LayoutParams(48, 48);
+        gearLp.rightMargin = 22;
+        bar.addView(gear, gearLp);
+
+        TextClock clock = new TextClock(activity);
+        clock.setFormat12Hour("HH:mm");
+        clock.setFormat24Hour("HH:mm");
+        clock.setTextColor(Color.WHITE);
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_PX, 33);
+        bar.addView(clock, wrap(0, 0));
+
+        stage.addView(bar, new LayoutParams(LayoutParams.WRAP_CONTENT, 69, Gravity.TOP | Gravity.END));
+    }
+
+    private void buildPanel() {
         LinearLayout panel = new LinearLayout(activity);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(20), dp(16), dp(20), dp(14));
-        panel.setBackground(glassBackground());
-        android.widget.ScrollView panelScroll = new android.widget.ScrollView(activity);
-        panelScroll.setFillViewport(true);
-        panelScroll.setClipToPadding(false);
-        panelScroll.addView(panel, new android.widget.ScrollView.LayoutParams(
-                LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
-        body.addView(panelScroll, new LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 0.44f));
+        panel.setPadding(30, 22, 30, 18);
+        panel.setBackground(box(0x8C34475A, 0x667F93A6, 2, 18));
 
-        TextView title = text("Rise of the Tomb Raider", 27, Color.WHITE, true);
-        panel.addView(title);
-        TextView version = text("ANDROID PORT  •  V1.0", 14, Color.rgb(126, 196, 220), false);
-        version.setPadding(0, dp(2), 0, dp(13));
-        panel.addView(version);
+        TextView title = text("Rise of the Tomb Raider", 46, Color.WHITE, true);
+        title.setSingleLine(true);
+        title.setAutoSizeTextTypeUniformWithConfiguration(30, 46, 1, TypedValue.COMPLEX_UNIT_PX);
+        panel.addView(title, row(64, 0));
+        panel.addView(text("Android Port v1.0", 28, Color.rgb(108, 186, 224), false), row(46, 0));
+        panel.addView(text("GAME SETTINGS", 26, PALE, true), row(46, 14));
 
-        TextView section = text("GAME SETTINGS", 14, Color.rgb(210, 220, 229), true);
-        section.setPadding(0, dp(4), 0, dp(8));
-        panel.addView(section);
+        TextView preset = choice(panel, "Graphics Preset:", "Graphics Preset",
+                new String[]{"Low", "Medium", "High", "Custom"}, "Medium", "preset");
+        preset.setBackground(box(0x55202D3A, 0xAAAAB8C6, 2, 6));
+        preset.setPadding(14, 4, 14, 4);
+        Drawable arrow = activity.getDrawable(R.drawable.ic_dropdown);
+        arrow.setBounds(0, 0, 28, 28); // explicit size: stage units, not dp
+        preset.setCompoundDrawablesRelative(null, null, arrow, null);
+        preset.setCompoundDrawablePadding(12);
 
-        addSpinnerRow(panel, "Graphics Preset", new String[]{"Low", "Medium", "High", "Custom"}, "Medium", "preset");
-        addResolutionRow(panel);
-        addSpinnerRow(panel, "Texture Quality", new String[]{"Low", "Medium", "High"}, "High", "texture");
-        addSpinnerRow(panel, "Shadow Resolution", new String[]{"Off", "Low", "Medium", "High"}, "Medium", "shadows");
-        addSpinnerRow(panel, "Ambient Occlusion", new String[]{"Off", "On"}, "On", "ao");
+        buildResolutionRow(panel);
+        choice(panel, "Texture Quality:", "Texture Quality",
+                new String[]{"Low", "Medium", "High"}, "High", "texture");
+        choice(panel, "Shadow Resolution:", "Shadow Resolution",
+                new String[]{"Off", "Low", "Medium", "High"}, "Medium", "shadows");
+        choice(panel, "Ambient Occlusion:", "Ambient Occlusion",
+                new String[]{"Off", "On"}, "On", "ao");
 
-        Button choose = new Button(activity);
-        choose.setAllCaps(false);
-        choose.setText("▣   SELECT GAME FOLDER");
-        choose.setTextSize(17);
-        choose.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        choose.setTextColor(Color.WHITE);
-        choose.setBackground(buttonBackground(Color.rgb(34, 48, 61), gold, 2));
+        LinearLayout choose = new LinearLayout(activity);
+        choose.setGravity(Gravity.CENTER);
+        choose.setBackground(box(0x66182430, Color.rgb(224, 230, 236), 3, 8));
+        choose.setClickable(true);
+        choose.setFocusable(true);
         choose.setOnClickListener(v -> listener.onChooseGameFolder());
-        LinearLayout.LayoutParams chooseLp = new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(52));
-        chooseLp.topMargin = dp(10);
-        panel.addView(choose, chooseLp);
+        ImageView icon = new ImageView(activity);
+        icon.setImageResource(R.drawable.ic_folder);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(46, 46);
+        iconLp.rightMargin = 28;
+        choose.addView(icon, iconLp);
+        choose.addView(text("SELECT GAME FOLDER", 31, Color.WHITE, true), wrap(0, 0));
+        panel.addView(choose, row(74, 20));
 
-        folderPath = text(folder == null ? "No game folder selected" : folder.toString(), 11,
-                Color.rgb(188, 199, 208), false);
-        folderPath.setMaxLines(2);
-        folderPath.setPadding(0, dp(6), 0, 0);
-        panel.addView(folderPath);
+        folderPath = text("", 20, Color.rgb(184, 196, 208), false);
+        folderPath.setSingleLine(true);
+        folderPath.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        panel.addView(folderPath, row(40, 8));
 
-        LinearLayout right = new LinearLayout(activity);
-        right.setOrientation(LinearLayout.VERTICAL);
-        right.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        right.setPadding(dp(16), 0, dp(2), dp(8));
-        body.addView(right, new LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 0.56f));
+        LayoutParams lp = new LayoutParams(556, LayoutParams.MATCH_PARENT, Gravity.START);
+        lp.setMargins(26, 36, 0, 40);
+        stage.addView(panel, lp);
+    }
 
-        TextView tagline = text("SURVIVE THE UNKNOWN", 13, Color.rgb(201, 218, 229), true);
-        tagline.setGravity(Gravity.CENTER);
-        right.addView(tagline);
-        TextView subtitle = text("Your adventure begins here", 12, Color.rgb(175, 195, 210), false);
-        subtitle.setGravity(Gravity.CENTER);
-        right.addView(subtitle);
+    /** A settings row whose value opens a picker when tapped. */
+    private TextView choice(LinearLayout panel, String label, String dialogTitle,
+                            String[] options, String fallback, String key) {
+        LinearLayout line = settingLine(panel, label);
+        line.addView(new View(activity), new LinearLayout.LayoutParams(0, 1, 1f));
+        String saved = prefs().getString(key, fallback);
+        TextView value = text(saved, 27, Color.WHITE, false);
+        line.addView(value, wrap(0, 0));
+        line.setOnClickListener(v -> {
+            int checked = Math.max(0, java.util.Arrays.asList(options)
+                    .indexOf(prefs().getString(key, fallback)));
+            new AlertDialog.Builder(activity).setTitle(dialogTitle)
+                    .setSingleChoiceItems(options, checked, (dialog, which) -> {
+                        prefs().edit().putString(key, options[which]).apply();
+                        value.setText(options[which]);
+                        dialog.dismiss();
+                    })
+                    .setNegativeButton("Cancel", null).show();
+        });
+        return value;
+    }
 
-        Button play = new Button(activity);
-        play.setText("▶   PLAY");
-        play.setTextSize(25);
-        play.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        play.setTextColor(Color.WHITE);
-        play.setAllCaps(false);
-        play.setBackground(buttonBackground(Color.rgb(91, 61, 24), gold, 3));
+    private void buildResolutionRow(LinearLayout panel) {
+        LinearLayout line = settingLine(panel, "Resolution Scaling:");
+        int saved = Math.max(50, Math.min(120, prefs().getInt("resolution", 80)));
+
+        LinearLayout control = new LinearLayout(activity);
+        control.setOrientation(LinearLayout.VERTICAL);
+        Segments segments = new Segments(activity);
+        segments.setPercent(saved);
+        LinearLayout.LayoutParams segLp = new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 18);
+        segLp.leftMargin = 12;
+        segLp.rightMargin = 12;
+        control.addView(segments, segLp);
+
+        SeekBar seek = new SeekBar(activity);
+        seek.setMin(0);
+        seek.setMax(70); // 50% to 120%
+        seek.setProgress(saved - 50);
+        seek.setPadding(12, 0, 12, 0);
+        seek.setProgressDrawable(activity.getDrawable(R.drawable.seek_track));
+        seek.setThumb(activity.getDrawable(R.drawable.seek_thumb));
+        seek.setSplitTrack(false);
+        control.addView(seek, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 36));
+
+        LinearLayout.LayoutParams controlLp = new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f);
+        controlLp.leftMargin = 6;
+        line.addView(control, controlLp);
+
+        TextView value = text(saved + "%", 27, Color.WHITE, false);
+        value.setGravity(Gravity.END);
+        line.addView(value, new LinearLayout.LayoutParams(76, LayoutParams.WRAP_CONTENT));
+
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                int percent = 50 + progress;
+                value.setText(percent + "%");
+                segments.setPercent(percent);
+                if (fromUser) prefs().edit().putInt("resolution", percent).apply();
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
+    }
+
+    private LinearLayout settingLine(LinearLayout panel, String label) {
+        LinearLayout line = new LinearLayout(activity);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        line.addView(text(label, 27, PALE, false), wrap(0, 0));
+        panel.addView(line, row(56, 0));
+        return line;
+    }
+
+    private void buildPlayButton() {
+        PlayButton play = new PlayButton(activity);
         play.setOnClickListener(v -> listener.onPlay());
-        LinearLayout.LayoutParams playLp = new LinearLayout.LayoutParams(dp(230), dp(70));
-        playLp.topMargin = dp(22);
-        right.addView(play, playLp);
-
-        updateStorageStatus();
+        LayoutParams lp = new LayoutParams(372, 147, Gravity.BOTTOM | Gravity.END);
+        lp.setMargins(0, 0, 31, 27); // includes 20 units of glow around the button
+        stage.addView(play, lp);
     }
 
     public void setFolder(Uri uri) {
-        folderPath.setText(uri == null ? "No game folder selected" : uri.toString());
-        updateStorageStatus();
+        folderPath.setText(uri == null ? "No game folder selected" : readablePath(uri));
+        refreshStatus();
     }
 
-    private void updateStorageStatus() {
-        storageStatus.setText(folderPath != null && folderPath.getText().length() > 0
-                && !folderPath.getText().toString().equals("No game folder selected")
-                ? "▤  GAME FOLDER SET" : "▤  STORAGE CHECK");
+    /** Re-reads controller, folder and log-access state. */
+    public void refreshStatus() {
+        updateControllerStatus();
+        boolean folderSet = prefs().getString("game_folder", null) != null;
+        if (!LogUtils.isRootStorageAvailable()) storageStatus.setText("ALLOW LOG ACCESS");
+        else storageStatus.setText(folderSet ? "STORAGE OK" : "STORAGE CHECK");
     }
 
-    private void addSpinnerRow(LinearLayout parent, String label, String[] options, String selected, String key) {
-        LinearLayout row = new LinearLayout(activity);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name = text(label, 13, pale, false);
-        row.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1f));
-        Spinner spinner = new Spinner(activity);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(activity, android.R.layout.simple_spinner_dropdown_item, options);
-        spinner.setAdapter(adapter);
-        String saved = activity.getSharedPreferences("rottr_launcher", 0).getString(key, selected);
-        int index = java.util.Arrays.asList(options).indexOf(saved);
-        spinner.setSelection(Math.max(0, index));
-        spinner.setBackgroundColor(Color.TRANSPARENT);
-        spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            public void onItemSelected(android.widget.AdapterView<?> p, View v, int position, long id) {
-                activity.getSharedPreferences("rottr_launcher", 0).edit().putString(key, options[position]).apply();
+    private void updateControllerStatus() {
+        boolean connected = false;
+        for (int id : InputDevice.getDeviceIds()) {
+            InputDevice device = InputDevice.getDevice(id);
+            if (device == null || device.isVirtual()) continue;
+            if ((device.getSources() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD) {
+                connected = true;
+                break;
             }
-            public void onNothingSelected(android.widget.AdapterView<?> p) {}
-        });
-        row.addView(spinner, new LinearLayout.LayoutParams(dp(112), dp(38)));
-        parent.addView(row);
+        }
+        String next = connected ? "CONTROLLER CONNECTED" : "NO CONTROLLER";
+        if (!next.contentEquals(controllerStatus.getText())) controllerStatus.setText(next);
     }
 
-    private void addResolutionRow(LinearLayout parent) {
-        LinearLayout row = new LinearLayout(activity);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView label = text("Resolution Scaling", 13, pale, false);
-        row.addView(label, new LinearLayout.LayoutParams(0, dp(38), 1f));
-        SeekBar seek = new SeekBar(activity);
-        seek.setMax(70);
-        int savedResolution = activity.getSharedPreferences("rottr_launcher", 0).getInt("resolution", 80);
-        seek.setProgress(Math.max(0, Math.min(70, savedResolution - 50)));
-        seek.setProgressTintList(android.content.res.ColorStateList.valueOf(gold));
-        seek.setThumbTintList(android.content.res.ColorStateList.valueOf(gold));
-        row.addView(seek, new LinearLayout.LayoutParams(dp(112), dp(38)));
-        TextView value = text(savedResolution + "%", 12, Color.WHITE, true);
-        value.setGravity(Gravity.CENTER);
-        row.addView(value, new LinearLayout.LayoutParams(dp(38), dp(38)));
-        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar s, int p, boolean user) {
-                int percent = 50 + p;
-                value.setText(percent + "%");
-                if (user) activity.getSharedPreferences("rottr_launcher", 0).edit().putInt("resolution", percent).apply();
+    /** Turns a folder-picker URI into the storage path a person recognises. */
+    private static String readablePath(Uri uri) {
+        try {
+            if ("com.android.externalstorage.documents".equals(uri.getAuthority())) {
+                String[] parts = DocumentsContract.getTreeDocumentId(uri).split(":", 2);
+                String base = "primary".equals(parts[0])
+                        ? Environment.getExternalStorageDirectory().getAbsolutePath()
+                        : "/storage/" + parts[0];
+                return parts.length < 2 || parts[1].isEmpty() ? base : base + "/" + parts[1];
             }
-            public void onStartTrackingTouch(SeekBar s) {}
-            public void onStopTrackingTouch(SeekBar s) {}
-        });
-        parent.addView(row);
+        } catch (RuntimeException error) {
+            LogUtils.exception("format game folder path", error);
+        }
+        return uri.toString();
     }
 
-    private TextView topItem(String value) {
-        TextView t = text(value, 12, Color.WHITE, true);
-        t.setPadding(dp(9), dp(7), dp(9), dp(7));
-        return t;
+    private SharedPreferences prefs() {
+        return activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    private TextView barItem(int icon, String label) {
+        TextView item = text(label, 22, Color.WHITE, false);
+        Drawable drawable = activity.getDrawable(icon);
+        drawable.setBounds(0, 0, 40, 40);
+        item.setCompoundDrawablesRelative(drawable, null, null, null);
+        item.setCompoundDrawablePadding(12);
+        item.setGravity(Gravity.CENTER_VERTICAL);
+        return item;
     }
 
     private TextView text(String value, int size, int color, boolean bold) {
-        TextView t = new TextView(activity);
-        t.setText(value);
-        t.setTextSize(size);
-        t.setTextColor(color);
-        if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        return t;
+        TextView view = new TextView(activity);
+        view.setText(value);
+        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, size);
+        view.setTextColor(color);
+        view.setIncludeFontPadding(false);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        view.setTypeface(Typeface.create("sans-serif-condensed", bold ? Typeface.BOLD : Typeface.NORMAL));
+        return view;
     }
 
-    private GradientDrawable glassBackground() {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(Color.argb(190, 19, 32, 46));
-        d.setCornerRadius(dp(13));
-        d.setStroke(dp(1), Color.argb(150, 164, 190, 210));
-        return d;
+    private static LinearLayout.LayoutParams row(int height, int topMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, height);
+        lp.topMargin = topMargin;
+        return lp;
     }
 
-    private GradientDrawable buttonBackground(int fill, int stroke, int width) {
-        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{fill, Color.rgb(Math.max(0, Color.red(fill)-12), Math.max(0, Color.green(fill)-12), Math.max(0, Color.blue(fill)-12))});
-        d.setCornerRadius(dp(9));
-        d.setStroke(dp(width), stroke);
-        return d;
+    private static LinearLayout.LayoutParams wrap(int leftMargin, int rightMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = leftMargin;
+        lp.rightMargin = rightMargin;
+        return lp;
     }
 
-    private int dp(float value) { return (int)(value * getResources().getDisplayMetrics().density + 0.5f); }
+    private static GradientDrawable box(int fill, int stroke, int strokeWidth, float radius) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setStroke(strokeWidth, stroke);
+        drawable.setCornerRadius(radius);
+        return drawable;
+    }
 
-    /** Original atmospheric mountain backdrop; uses no bundled game assets. */
-    private static final class Backdrop extends View {
-        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final int[][] peaks = {{0,620,110,350,230,570,360,300,500,590,640,400,790,610,960,330,1120,600,1280,370,1440,620,1600,410,1800,650}};
-        Backdrop(Context c) { super(c); }
-        @Override protected void onDraw(Canvas c) {
-            super.onDraw(c);
-            float w=getWidth(), h=getHeight();
-            p.setShader(new android.graphics.LinearGradient(0,0,w,h, new int[]{0xff071522,0xff17364d,0xff09121d},null,android.graphics.Shader.TileMode.CLAMP));
-            c.drawRect(0,0,w,h,p); p.setShader(null);
-            Path ridge=new Path(); ridge.moveTo(0,h*.57f);
-            ridge.lineTo(w*.13f,h*.28f); ridge.lineTo(w*.24f,h*.50f); ridge.lineTo(w*.39f,h*.20f);
-            ridge.lineTo(w*.52f,h*.49f); ridge.lineTo(w*.68f,h*.25f); ridge.lineTo(w*.82f,h*.53f);
-            ridge.lineTo(w*.93f,h*.31f); ridge.lineTo(w,h*.47f); ridge.lineTo(w,h); ridge.lineTo(0,h); ridge.close();
-            p.setColor(0xff101f2b); c.drawPath(ridge,p);
-            Path front=new Path(); front.moveTo(0,h*.72f); front.lineTo(w*.18f,h*.52f); front.lineTo(w*.32f,h*.73f);
-            front.lineTo(w*.49f,h*.48f); front.lineTo(w*.66f,h*.77f); front.lineTo(w*.82f,h*.51f);
-            front.lineTo(w,h*.75f); front.lineTo(w,h); front.lineTo(0,h); front.close();
-            p.setColor(0xff0a1721); c.drawPath(front,p);
-            p.setColor(0x99dceeff);
-            for(int i=0;i<95;i++){ float x=(i*97%997)/997f*w; float y=(i*53%991)/991f*h; c.drawCircle(x,y, (i%3)+.6f,p); }
-            p.setColor(0x55ffffff);
-            c.drawRect(0,0,w,h,p);
+    /** The row of small squares above the resolution slider. */
+    private static final class Segments extends View {
+        private static final int COUNT = 9;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private int percent = 80;
+
+        Segments(Context context) { super(context); }
+
+        void setPercent(int value) {
+            percent = value;
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float step = getWidth() / (float) COUNT;
+            float side = Math.min(step - 5, getHeight());
+            int filled = Math.round(percent / 100f * COUNT);
+            for (int i = 0; i < COUNT; i++) {
+                paint.setColor(i < filled ? GOLD : 0x558795A3);
+                canvas.drawRect(i * step, 0, i * step + side, side, paint);
+            }
+        }
+    }
+
+    /** Gold PLAY button with a soft glow. */
+    private static final class PlayButton extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        PlayButton(Context context) {
+            super(context);
+            setLayerType(LAYER_TYPE_SOFTWARE, null); // required for BlurMaskFilter
+            setClickable(true);
+            setFocusable(true);
+            setContentDescription("Play");
+        }
+
+        @Override protected void drawableStateChanged() {
+            super.drawableStateChanged();
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float inset = 20, right = getWidth() - inset, bottom = getHeight() - inset;
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(10);
+            paint.setColor(0xCCF2B53C);
+            paint.setMaskFilter(new BlurMaskFilter(14, BlurMaskFilter.Blur.NORMAL));
+            canvas.drawRoundRect(inset, inset, right, bottom, 10, 10, paint);
+            paint.setMaskFilter(null);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(new android.graphics.LinearGradient(0, inset, 0, bottom,
+                    isPressed() ? 0xFFB5832C : 0xE69C7025, 0xE64A330F,
+                    android.graphics.Shader.TileMode.CLAMP));
+            canvas.drawRoundRect(inset, inset, right, bottom, 10, 10, paint);
+            paint.setShader(null);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(4);
+            paint.setColor(0xFFFFD276);
+            canvas.drawRoundRect(inset, inset, right, bottom, 10, 10, paint);
+
+            float middle = getHeight() / 2f;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(0xFFFFF6E0);
+            android.graphics.Path triangle = new android.graphics.Path();
+            triangle.moveTo(88, middle - 26);
+            triangle.lineTo(132, middle);
+            triangle.lineTo(88, middle + 26);
+            triangle.close();
+            canvas.drawPath(triangle, paint);
+
+            paint.setColor(Color.WHITE);
+            paint.setTextSize(66);
+            paint.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+            canvas.drawText("PLAY", 152, middle - (paint.ascent() + paint.descent()) / 2f, paint);
         }
     }
 }

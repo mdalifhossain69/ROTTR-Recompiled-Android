@@ -30,13 +30,29 @@ public class MainActivity extends Activity implements android.view.TextureView.S
         LogUtils.init(this);
         LogUtils.i(TAG, "onCreate entered; native library loaded=" + NativeBridge.isNativeAvailable());
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        hideSystemBars();
+        String saved = getSharedPreferences(PREFS, MODE_PRIVATE).getString("game_folder", null);
+        if (saved != null) gameFolder = Uri.parse(saved);
+        // Draw into the camera-cutout area too, so there is no black bar in landscape.
+        WindowManager.LayoutParams window = getWindow().getAttributes();
+        window.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        getWindow().setAttributes(window);
+        showLauncher();
+        // Without this access, logs cannot go to Internal storage/ROTTR-logs.
+        if (!LogUtils.isRootStorageAvailable()) showRootStoragePrompt();
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) hideSystemBars();
+    }
+
+    private void hideSystemBars() {
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
-        String saved = getSharedPreferences(PREFS, MODE_PRIVATE).getString("game_folder", null);
-        if (saved != null) gameFolder = Uri.parse(saved);
-        showLauncher();
     }
 
     private void showLauncher() {
@@ -45,6 +61,7 @@ public class MainActivity extends Activity implements android.view.TextureView.S
             @Override public void onChooseGameFolder() { chooseGameFolder(); }
             @Override public void onPlay() { onPlayPressed(); }
             @Override public void onSettings() { showAppSettings(); }
+            @Override public void onStorageCheck() { checkStorage(); }
         }, gameFolder);
         setContentView(launcher);
         LogUtils.i(TAG, "ROTTR launcher screen displayed");
@@ -99,13 +116,34 @@ public class MainActivity extends Activity implements android.view.TextureView.S
 
     private void showAppSettings() {
         new AlertDialog.Builder(this).setTitle("ROTTR launcher")
-                .setMessage("Launcher settings are saved on this device. Graphics options currently configure launcher preferences; native renderer integration is still pending.")
-                .setPositiveButton("OK", null).show();
+                .setMessage("Graphics options are saved on this device; the native renderer does not use them yet.\n\n" + logStatus())
+                .setPositiveButton("OK", null)
+                .setNeutralButton("Log access", (dialog, which) -> openLogAccessSettings())
+                .show();
+    }
+
+    private void checkStorage() {
+        if (!LogUtils.isRootStorageAvailable()) {
+            storagePromptShown = false;
+            showRootStoragePrompt();
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle("Storage")
+                .setMessage(logStatus()).setPositiveButton("OK", null).show();
+    }
+
+    private String logStatus() {
+        java.io.File file = LogUtils.getLogFile();
+        String where = file == null ? "no log file is open" : file.getAbsolutePath();
+        return (LogUtils.isRootStorageAvailable()
+                ? "All files access: allowed" : "All files access: NOT allowed")
+                + "\nCurrent log: " + where;
     }
 
     @Override protected void onStart() { super.onStart(); LogUtils.i(TAG, "onStart"); }
     @Override protected void onResume() {
         super.onResume();
+        LogUtils.init(this);
         LogUtils.i(TAG, "onResume");
         if (LogUtils.isRootStorageAvailable()) {
             boolean moved = LogUtils.migrateToRootStorage(this);
@@ -113,6 +151,7 @@ public class MainActivity extends Activity implements android.view.TextureView.S
         } else {
             LogUtils.i(TAG, "All-files access not granted; using app-private diagnostics storage");
         }
+        if (launcher != null) launcher.refreshStatus();
     }
 
     private void showRootStoragePrompt() {
@@ -120,13 +159,26 @@ public class MainActivity extends Activity implements android.view.TextureView.S
         storagePromptShown = true;
         new AlertDialog.Builder(this).setTitle("Enable ROTTR crash logs")
                 .setMessage("Allow access to all files to save diagnostics in Internal storage/ROTTR-logs.")
-                .setPositiveButton("Open settings", (dialog, which) -> {
-                    try {
-                        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-                        intent.setData(Uri.parse("package:" + getPackageName()));
-                        startActivity(intent);
-                    } catch (Throwable error) { LogUtils.exception("open all-files-access settings", error); }
-                }).setNegativeButton("Not now", null).show();
+                .setPositiveButton("Open settings", (dialog, which) -> openLogAccessSettings())
+                .setNegativeButton("Not now", null).show();
+    }
+
+    private void openLogAccessSettings() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+            intent.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Throwable error) {
+            LogUtils.exception("open all-files-access settings for this app", error);
+            try {
+                // Some devices only offer the list of all apps.
+                startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            } catch (Throwable fallback) {
+                LogUtils.exception("open all-files-access list", fallback);
+                Toast.makeText(this, "Open Settings > Apps > Special access > All files access",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     @Override protected void onPause() { LogUtils.i(TAG, "onPause"); super.onPause(); }

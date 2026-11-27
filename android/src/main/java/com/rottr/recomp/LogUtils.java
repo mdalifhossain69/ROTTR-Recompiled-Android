@@ -34,6 +34,7 @@ public final class LogUtils {
     private static java.lang.Process logcatProcess;
     private static Thread.UncaughtExceptionHandler previousHandler;
     private static boolean initialized;
+    private static boolean crashHandlerInstalled;
     private static Context appContext;
 
     private LogUtils() {}
@@ -55,8 +56,11 @@ public final class LogUtils {
             }
         }
         if (initialized) {
-            installCrashHandler();
-            startLogcatCapture();
+            if (!crashHandlerInstalled) {
+                installCrashHandler();
+                crashHandlerInstalled = true;
+            }
+            if (logcatProcess == null) startLogcatCapture();
         }
     }
 
