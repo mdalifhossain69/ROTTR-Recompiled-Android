@@ -1,144 +1,145 @@
 package com.rottr.recomp;
 
 import android.content.Context;
-import android.os.Environment;
+import android.os.Build;
+import android.os.Process;
 import android.util.Log;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-/**
- * Auto-saves ROTTR-Recomp logs to external storage (SD card).
- *
- * On app open this creates {@code /sdcard/ROTTR-logs/} (falling back to the app's
- * external files directory on scoped-storage devices) and writes every log line to a
- * timestamped file so QA / testers can pull device logs without adb.
- */
+/** Durable diagnostics for lifecycle events, uncaught exceptions and this process' logcat. */
 public final class LogUtils {
-    private static final String TAG = "ROTTR-Recomp-LogUtils";
-    private static final String LOG_DIR_NAME = "ROTTR-logs";
-    private static PrintWriter sLogWriter;
-    private static File sLogFile;
-    private static boolean sEnabled = false;
+    private static final String TAG = "ROTTR-Diagnostics";
+    private static PrintWriter writer;
+    private static File logFile;
+    private static Process logcatProcess;
+    private static Thread.UncaughtExceptionHandler previousHandler;
+    private static boolean initialized;
 
-    private LogUtils() {
-        // utility class
-    }
+    private LogUtils() {}
 
-    /** Call once from Application / Activity.onCreate(). */
     public static synchronized void init(Context context) {
-        if (sEnabled) {
-            return;
+        if (initialized) return;
+        Context app = context.getApplicationContext();
+        File dir = app.getExternalFilesDir("ROTTR-logs");
+        if (dir == null || (!dir.isDirectory() && !dir.mkdirs())) {
+            dir = new File(app.getFilesDir(), "ROTTR-logs");
+            if (!dir.isDirectory() && !dir.mkdirs()) dir = null;
         }
-        File dir = null;
-
-        // Primary target: /sdcard/ROTTR-logs (user-requested location)
-        File externalRoot = Environment.getExternalStorageDirectory();
-        if (externalRoot != null) {
-            File candidate = new File(externalRoot, LOG_DIR_NAME);
-            if (tryMakeDir(candidate)) {
-                dir = candidate;
-            }
-        }
-
-        // Fallback: app-specific external files dir (always writable, no permission)
-        if (dir == null && context != null) {
-            File extFiles = context.getExternalFilesDir(null);
-            if (extFiles != null) {
-                File candidate = new File(extFiles, LOG_DIR_NAME);
-                if (tryMakeDir(candidate)) {
-                    dir = candidate;
-                }
-            }
-        }
-
-        // Last resort: internal cache dir
-        if (dir == null && context != null) {
-            File candidate = new File(context.getCacheDir(), LOG_DIR_NAME);
-            if (tryMakeDir(candidate)) {
-                dir = candidate;
-            }
-        }
-
         if (dir == null) {
-            Log.e(TAG, "Failed to create any log directory");
+            Log.e(TAG, "Cannot create diagnostics directory");
             return;
         }
 
-        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-                .format(new Date());
-        sLogFile = new File(dir, "rottr_" + timestamp + ".log");
-
+        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        logFile = new File(dir, "rottr_" + stamp + ".log");
         try {
-            sLogWriter = new PrintWriter(new FileWriter(sLogFile, true));
-            sEnabled = true;
-            write("=== ROTTR-Recomp log session started ===");
-            write("Log file: " + sLogFile.getAbsolutePath());
-            write("Device: " + android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL);
-            write("Android SDK: " + android.os.Build.VERSION.SDK_INT);
+            writer = new PrintWriter(new FileWriter(logFile, true), true);
+            initialized = true;
+            append("=== ROTTR diagnostic session started ===");
+            append("File: " + logFile.getAbsolutePath());
+            append("Device: " + Build.MANUFACTURER + " " + Build.MODEL);
+            append("Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
+            append("Process ID: " + Process.myPid());
+            installCrashHandler();
+            startLogcatCapture();
+            Log.i(TAG, "Diagnostics file: " + logFile.getAbsolutePath());
         } catch (IOException e) {
-            Log.e(TAG, "Failed to open log file", e);
-            sLogWriter = null;
+            Log.e(TAG, "Cannot open diagnostics file", e);
+            writer = null;
         }
     }
 
-    private static boolean tryMakeDir(File dir) {
-        if (dir.exists()) {
-            return dir.isDirectory();
-        }
-        return dir.mkdirs();
+    private static synchronized void append(String message) {
+        if (writer == null) return;
+        writer.println(timestamp() + " " + message);
+        writer.flush();
     }
 
-    /** Write a single line to the log file (and to Logcat). */
-    public static synchronized void write(String message) {
-        if (!sEnabled || sLogWriter == null) {
-            return;
-        }
-        String line = timestamp() + " " + message;
-        sLogWriter.println(line);
-        sLogWriter.flush();
-        Log.d("ROTTR-Recomp-LogFile", message);
+    public static void write(String message) {
+        append(message);
+        Log.d(TAG, message);
     }
 
-    /** Convenience: log at Info level. */
-    public static synchronized void i(String tag, String message) {
+    public static void i(String tag, String message) {
         write("I/" + tag + ": " + message);
         Log.i(tag, message);
     }
 
-    /** Convenience: log at Error level. */
-    public static synchronized void e(String tag, String message) {
+    public static void e(String tag, String message) {
         write("E/" + tag + ": " + message);
         Log.e(tag, message);
     }
 
-    /** Convenience: log at Debug level. */
-    public static synchronized void d(String tag, String message) {
+    public static void d(String tag, String message) {
         write("D/" + tag + ": " + message);
         Log.d(tag, message);
     }
 
-    /** Return the path of the current log file, or null if not initialized. */
-    public static synchronized File getLogFile() {
-        return sLogFile;
+    public static void exception(String where, Throwable error) {
+        StringWriter sw = new StringWriter();
+        error.printStackTrace(new PrintWriter(sw));
+        append("EXCEPTION at " + where + "\n" + sw);
+        Log.e(TAG, "Exception at " + where, error);
     }
 
+    private static void installCrashHandler() {
+        previousHandler = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            exception("uncaught thread " + thread.getName(), error);
+            append("=== PROCESS TERMINATING AFTER UNCAUGHT EXCEPTION ===");
+            if (previousHandler != null) previousHandler.uncaughtException(thread, error);
+        });
+    }
+
+    /** Captures Java and native logcat messages emitted by this app process. */
+    private static void startLogcatCapture() {
+        Thread capture = new Thread(() -> {
+            try {
+                logcatProcess = new ProcessBuilder("logcat", "-v", "threadtime",
+                        "--pid=" + Process.myPid()).redirectErrorStream(true).start();
+                append("Process logcat capture started");
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(logcatProcess.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) append("LOGCAT " + line);
+                }
+                append("Process logcat capture ended");
+            } catch (Exception e) {
+                append("Process logcat capture unavailable: " + e);
+                Log.w(TAG, "Could not capture process logcat", e);
+            }
+        }, "ROTTR-logcat-capture");
+        capture.setDaemon(true);
+        capture.start();
+    }
+
+    public static synchronized File getLogFile() { return logFile; }
+
     public static synchronized void close() {
-        if (sLogWriter != null) {
-            write("=== ROTTR-Recomp log session ended ===");
-            sLogWriter.close();
-            sLogWriter = null;
+        append("=== ROTTR diagnostic session ended ===");
+        if (logcatProcess != null) {
+            logcatProcess.destroy();
+            logcatProcess = null;
         }
-        sEnabled = false;
+        if (writer != null) {
+            writer.flush();
+            writer.close();
+            writer = null;
+        }
+        initialized = false;
     }
 
     private static String timestamp() {
-        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-                .format(new Date());
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(new Date());
     }
 }
