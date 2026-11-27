@@ -3,8 +3,8 @@
 namespace rottr {
 
 bool hasWindowsX64ExecutionBackend() {
-    // The current APK contains neither Box64 nor FEXCore nor an ARM64EC/Wine
-    // CPU bridge. Do not report readiness until a real backend is linked.
+    // The CPU interpreter is intentionally only a limited instruction subset.
+    // There is still no PE loader, Windows ABI, DLL loader or full game runtime.
     return false;
 }
 
@@ -19,13 +19,12 @@ std::string describeWindowsX64ExecutionBackend() {
 
     std::string report = std::string("CPU host: ") + host +
             "\nGame CPU: Windows x86-64 (PE32+)\n";
-    if (hasWindowsX64ExecutionBackend()) {
-        report += "x86-64 backend: available\n";
-    } else {
-        report += "x86-64 backend: NOT LINKED\n"
-                  "ROTTR.exe cannot execute yet. Vulkan presentation does not "
-                  "translate or execute x86-64 CPU instructions.\n";
-    }
+    report += hasX64InstructionInterpreter()
+            ? "x86-64 interpreter: available (limited instruction subset)\n"
+            : "x86-64 interpreter: NOT LINKED\n";
+    report += "Windows x86-64 game runtime: NOT AVAILABLE\n"
+              "Missing: production ISA coverage, PE loader, Windows ABI/API, DLL loader.\n"
+              "ROTTR.exe cannot execute yet.\n";
     return report;
 }
 
