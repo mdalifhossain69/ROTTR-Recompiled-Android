@@ -1,6 +1,10 @@
 package com.rottr.recomp;
 
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.database.Cursor;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
@@ -10,6 +14,7 @@ import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
+import androidx.core.content.ContextCompat;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
@@ -19,15 +24,55 @@ public class MainActivity extends Activity {
     private static final int REQUEST_GAME_FOLDER = 4101;
     private static final int REQUEST_PROTON_PACKAGE = 4201;
     private static final int REQUEST_FEXCORE_PACKAGE = 4202;
+    private static final String PROTON_104_URL = "https://downloads.gamenative.app/proton-10.0-4-arm64ec.wcp";
+    private static final String DOWNLOAD_PREF = "proton_104_download_id";
     private static final String PREFS = "rottr_launcher";
     private Uri gameFolder;
     private LauncherScreen launcher;
     private boolean storagePromptShown;
     private boolean bootScreenVisible;
+    private boolean downloadReceiverRegistered;
+    private final BroadcastReceiver runtimeDownloadReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
+            long completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+            long expectedId = getSharedPreferences(PREFS, MODE_PRIVATE).getLong(DOWNLOAD_PREF, -2L);
+            if (completedId != expectedId) return;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(DOWNLOAD_PREF).apply();
+            DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(completedId))) {
+                if (cursor == null || !cursor.moveToFirst()) {
+                    showRuntimeDownloadError("Download status could not be read.");
+                    return;
+                }
+                int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                if (status != DownloadManager.STATUS_SUCCESSFUL) {
+                    int reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
+                    showRuntimeDownloadError("Proton download failed (code " + reason + "). Try again or import a WCP file manually.");
+                    return;
+                }
+            } catch (Exception error) {
+                LogUtils.exception("check Proton download", error);
+                showRuntimeDownloadError("Could not verify the Proton download: " + error.getMessage());
+                return;
+            }
+            Uri downloaded = manager.getUriForDownloadedFile(completedId);
+            if (downloaded == null) {
+                showRuntimeDownloadError("Downloaded Proton package could not be opened.");
+                return;
+            }
+            Toast.makeText(MainActivity.this, "Proton 10.0-4 downloaded. Importing...", Toast.LENGTH_LONG).show();
+            installRuntimePackage(downloaded, RuntimePackageInstaller.TYPE_PROTON);
+        }
+    };
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         LogUtils.init(this);
+        ContextCompat.registerReceiver(this, runtimeDownloadReceiver,
+                new android.content.IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                ContextCompat.RECEIVER_NOT_EXPORTED);
+        downloadReceiverRegistered = true;
         LogUtils.i(TAG, "onCreate entered; native library loaded=" + NativeBridge.isNativeAvailable());
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         hideSystemBars();
@@ -176,11 +221,48 @@ public class MainActivity extends Activity {
     private void showRuntimeInstaller() {
         new AlertDialog.Builder(this).setTitle("Install Windows runtime")
                 .setMessage("Import the matching Winlator component packages. Proton and FEXCore are separate WCP files.")
-                .setItems(new String[] {"Proton 10 ARM64EC (.wcp)", "FEXCore ARM64EC bridge (.wcp)"},
-                        (dialog, which) -> chooseRuntimePackage(which == 0
-                                ? RuntimePackageInstaller.TYPE_PROTON
-                                : RuntimePackageInstaller.TYPE_FEXCORE))
+                .setItems(new String[] {
+                        "Download Proton 10.0-4 ARM64EC",
+                        "Import Proton ARM64EC (.wcp)",
+                        "Import FEXCore ARM64EC bridge (.wcp)"},
+                        (dialog, which) -> {
+                            if (which == 0) downloadProton104();
+                            else chooseRuntimePackage(which == 1
+                                    ? RuntimePackageInstaller.TYPE_PROTON
+                                    : RuntimePackageInstaller.TYPE_FEXCORE);
+                        })
                 .setNegativeButton("Cancel", null).show();
+    }
+
+    private void downloadProton104() {
+        try {
+            DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            if (manager == null) throw new IllegalStateException("Android Download Manager is unavailable");
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(PROTON_104_URL));
+            request.setTitle("ROTTR runtime: Proton 10.0-4 ARM64EC");
+            request.setDescription("Downloading the ARM64EC compatibility component");
+            request.setMimeType("application/octet-stream");
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setAllowedOverMetered(true);
+            request.setAllowedOverRoaming(false);
+            request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS,
+                    "proton-10.0-4-arm64ec.wcp");
+            long id = manager.enqueue(request);
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putLong(DOWNLOAD_PREF, id).apply();
+            Toast.makeText(this, "Downloading Proton 10.0-4 ARM64EC", Toast.LENGTH_LONG).show();
+            LogUtils.i(TAG, "Queued Proton 10.0-4 ARM64EC download id=" + id);
+        } catch (Exception error) {
+            LogUtils.exception("download Proton 10.0-4 ARM64EC", error);
+            showRuntimeDownloadError(error.getMessage() == null ? error.toString() : error.getMessage());
+        }
+    }
+
+    private void showRuntimeDownloadError(String message) {
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            new AlertDialog.Builder(this).setTitle("Proton download failed")
+                    .setMessage(message).setPositiveButton("OK", null).show();
+        });
     }
 
     private void chooseRuntimePackage(String type) {
@@ -286,6 +368,11 @@ public class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         LogUtils.i(TAG, "onDestroy");
+        if (downloadReceiverRegistered) {
+            try { unregisterReceiver(runtimeDownloadReceiver); }
+            catch (IllegalArgumentException ignored) { }
+            downloadReceiverRegistered = false;
+        }
         try { NativeBridge.releaseSurface(); } catch (Throwable error) { LogUtils.exception("NativeBridge.releaseSurface", error); }
         LogUtils.close();
         super.onDestroy();
