@@ -184,6 +184,50 @@ int main() {
         return 1;
     }
 
+
+    // 64-bit immediate shifts: SHL, SHR and arithmetic SAR.
+    constexpr uint8_t shiftProgram[] = {
+        0x48,0xb8,3,0,0,0,0,0,0,0,
+        0x48,0xc1,0xe0,2,
+        0x48,0xb9,0x10,0,0,0,0,0,0,0,
+        0x48,0xc1,0xe9,2,
+        0x48,0xba,0xf8,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0x48,0xc1,0xfa,1,
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(shiftProgram); ++i) memory[i] = shiftProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 32);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "64-bit shift instructions must reach HLT") ||
+        !expect(cpu.gpr[0] == 12, "SHL must shift the destination left") ||
+        !expect(cpu.gpr[1] == 4, "SHR must shift in zero bits") ||
+        !expect(cpu.gpr[2] == UINT64_MAX - 3,
+                "SAR must preserve the negative sign bit")) {
+        return 1;
+    }
+
+    // A zero shift count leaves both the operand and arithmetic flags unchanged.
+    constexpr uint8_t zeroShiftProgram[] = {
+        0x48,0xb8,0x34,0x12,0,0,0,0,0,0,
+        0x48,0xc1,0xe0,0,
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(zeroShiftProgram); ++i)
+        memory[i] = zeroShiftProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    cpu.rflags |= (1ULL << 0);
+    result = rottr::runX64Interpreter(cpu, guest, 8);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "zero-count shift must reach HLT") ||
+        !expect(cpu.gpr[0] == 0x1234, "zero-count shift must preserve its operand") ||
+        !expect((cpu.rflags & (1ULL << 0)) != 0,
+                "zero-count shift must preserve carry flag")) {
+        return 1;
+    }
+
     std::puts("OK");
     return 0;
 }
