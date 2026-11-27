@@ -4,7 +4,7 @@
 Usage: python3 scripts/build_harness.py [--lift-dir generated/lift] [--out generated/harness]
 
 The IR is compiled for the machine this runs on (ARM64 on a phone). Functions that
-the sample calls but does not contain get stubs that mark the run as 'external'.
+the sample calls but does not contain get stubs that mark the run as 'escaped'.
 """
 import argparse
 import glob
@@ -37,7 +37,6 @@ def main(argv=None):
     p.add_argument("--lift-dir", default=os.path.join(ROOT, "generated/lift"))
     p.add_argument("--out", default=os.path.join(ROOT, "generated/harness"))
     p.add_argument("--remill-include", default=os.path.join(ROOT, "tools/remill-src/include"))
-    p.add_argument("--remill-lib", default=os.path.join(ROOT, "tools/remill-src/build/lib"))
     p.add_argument("--clang")
     p.add_argument("--cxx")
     args = p.parse_args(argv)
@@ -46,8 +45,6 @@ def main(argv=None):
     cxx = args.cxx or find_tool(["clang++-17", "clang++"])
     if not os.path.isfile(os.path.join(args.remill_include, "remill/Arch/X86/Runtime/State.h")):
         raise SystemExit(f"error: Remill headers not found in {args.remill_include}")
-    if not os.path.isdir(args.remill_lib):
-        raise SystemExit(f"error: Remill runtime lib dir not found: {args.remill_lib}")
 
     sources = sorted(glob.glob(os.path.join(args.lift_dir, "*.ll")))
     if not sources:
@@ -78,37 +75,14 @@ def main(argv=None):
             f.write(f'extern "C" void *{sym}(void *, uint64_t, void *m) '
                     f'{{ harness_note_external(); return m; }}\n')
 
-    # Remill static libraries
-    remill_libs = [
-        os.path.join(args.remill_lib, "Arch/X86/libremill_arch_x86.a"),
-        os.path.join(args.remill_lib, "Arch/libremill_arch.a"),
-        os.path.join(args.remill_lib, "BC/libremill_bc.a"),
-        os.path.join(args.remill_lib, "OS/libremill_os.a"),
-        os.path.join(args.remill_lib, "Version/libremill_version.a"),
-    ]
-
-    # Compile runtime sources (remill_intrinsics.cpp, guest.c) - skip win32_stubs.cpp for test
-    runtime_objects = []
-    for src in [
-        os.path.join(ROOT, "runtime/src/remill_intrinsics.cpp"),
-        os.path.join(ROOT, "runtime/src/guest.c"),
-    ]:
-        obj = os.path.join(args.out, os.path.basename(src) + ".o")
-        if src.endswith(".cpp"):
-            run([cxx, "-std=c++17", "-O2", "-fPIC", "-w",
-                 f"-I{args.remill_include}", f"-I{os.path.join(ROOT, 'runtime/include')}",
-                 "-DADDRESS_SIZE_BITS=64", "-c", src, "-o", obj])
-        else:
-            run(["clang", "-O2", "-fPIC", "-w",
-                 f"-I{os.path.join(ROOT, 'runtime/include')}",
-                 "-c", src, "-o", obj])
-        runtime_objects.append(obj)
-
+    includes = [f"-I{args.remill_include}", f"-I{os.path.join(ROOT, 'runtime/include')}"]
     lib = os.path.join(args.out, "libharness.so")
-    run([cxx, "-std=c++17", "-O2", "-fPIC", "-shared", "-w",
-         f"-I{args.remill_include}",
-         "-DADDRESS_SIZE_BITS=64",
-         os.path.join(ROOT, "harness/shim.cpp"), stubs, *objects, *runtime_objects, *remill_libs, "-o", lib])
+    # -z defs makes a missing Remill intrinsic a link error that names it.
+    run([cxx, "-std=c++17", "-O2", "-fPIC", "-shared", "-w", "-Wl,-z,defs",
+         "-DADDRESS_SIZE_BITS=64", "-DHAS_FEATURE_AVX=1", "-DHAS_FEATURE_AVX512=0", *includes,
+         os.path.join(ROOT, "harness/shim.cpp"),
+         os.path.join(ROOT, "runtime/src/remill_intrinsics.cpp"),
+         stubs, *objects, "-o", lib])
     print(f"built {lib}: {len(defined)} lifted functions, {len(declared - defined)} stubbed callees")
     return 0
 

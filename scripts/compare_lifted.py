@@ -4,7 +4,8 @@
 Reference: the original bytes run in the Unicorn x86-64 emulator.
 Under test: the Remill-lifted code, compiled natively (scripts/build_harness.py).
 Both start from identical random registers, flags, vector registers and memory.
-Only functions that make no calls are compared.
+A function is compared if every function it calls directly was lifted too. Runs
+that leave the lifted code (indirect call, jump table) or trap are skipped.
 Usage: python3 scripts/compare_lifted.py path/to/ROTTR.exe [--inputs 200] [--seed 1]
 """
 import argparse
@@ -38,7 +39,9 @@ GPR_REGS = [getattr(X, "UC_X86_REG_" + n.upper()) for n in GPR_NAMES]
 FLAG_NAMES = ["cf", "pf", "af", "zf", "sf", "df", "of"]
 FLAG_BITS = [0, 2, 4, 6, 7, 10, 11]
 XMM_REGS = [getattr(X, f"UC_X86_REG_XMM{i}") for i in range(16)]
-LEAF_BAD = re.compile(r"@(sub_[0-9a-f]+|__remill_(function_call|jump|missing_block|async_hyper_call))\b")
+CALL = re.compile(r"\bcall\b[^\n]*@(sub_[0-9a-f]+)\(")
+DEFINE = re.compile(r"^define\b[^\n]*@(sub_[0-9a-f]+)\(", re.M)
+RUN_OK, RUN_FAULT, RUN_TIMEOUT = 0, 1, 2
 
 
 class Snapshot(ctypes.Structure):
@@ -46,15 +49,35 @@ class Snapshot(ctypes.Structure):
                 ("xmm", (ctypes.c_uint8 * 16) * 16)]
 
 
-def is_leaf(ir_text):
-    """True if the lifted function makes no calls or jumps to other code."""
-    for line in ir_text.splitlines():
-        s = line.strip()
-        if s.startswith(("define", "declare", ";")) or not s:
+class Events(ctypes.Structure):
+    """Mirrors rottr_events in rottr/remill_runtime.h."""
+    _fields_ = [("undefined", ctypes.c_uint32), ("escaped", ctypes.c_uint32),
+                ("unsupported", ctypes.c_uint32), ("returned", ctypes.c_uint32),
+                ("return_pc", ctypes.c_uint64)]
+
+
+def call_graph(sources):
+    """Map each lifted function to the functions it calls directly."""
+    graph = {}
+    for text in sources:
+        for name in DEFINE.findall(text):
+            graph[name] = set(CALL.findall(text))
+    return graph
+
+
+def missing_callees(name, graph):
+    """Functions reachable from `name` through direct calls that were not lifted."""
+    seen, todo, missing = set(), [name], set()
+    while todo:
+        current = todo.pop()
+        if current in seen:
             continue
-        if LEAF_BAD.search(s):
-            return False
-    return True
+        seen.add(current)
+        if current not in graph:
+            missing.add(current)
+        else:
+            todo.extend(graph[current])
+    return missing
 
 
 def build_image(data, report):
@@ -136,9 +159,10 @@ class Lifted:
         self.lib = ctypes.CDLL(lib_path)
         self.lib.harness_run.argtypes = [ctypes.c_void_p, ctypes.c_uint64,
                                          ctypes.POINTER(Snapshot), ctypes.POINTER(Snapshot),
-                                         ctypes.c_int, ctypes.POINTER(ctypes.c_uint32)]
+                                         ctypes.c_int, ctypes.POINTER(Events)]
         self.lib.harness_add_region.argtypes = [ctypes.c_uint64, ctypes.c_uint64,
                                                 ctypes.c_void_p, ctypes.c_int]
+        self.lib.harness_run.restype = ctypes.c_int
         self.image = (ctypes.c_uint8 * len(image)).from_buffer(image)
         self.image_len = len(image)
 
@@ -160,15 +184,15 @@ class Lifted:
         for i, v in enumerate(xmm):
             for j, b in enumerate(v):
                 snap_in.xmm[i][j] = b
-        info = (ctypes.c_uint32 * 4)()
+        events = Events()
         rc = self.lib.harness_run(self.address(rva), rva, ctypes.byref(snap_in),
-                                  ctypes.byref(snap_out), 500, info)
+                                  ctypes.byref(snap_out), 2, ctypes.byref(events))
         return rc, {
             "gpr": list(snap_out.gpr),
             "flags": list(snap_out.flags)[:7],
             "xmm": [bytes(snap_out.xmm[i]) for i in range(16)],
             "data": bytes(d), "stack": bytes(s),
-        }, list(info)
+        }, events
 
 
 def differences(ref, lif):
@@ -189,12 +213,48 @@ def differences(ref, lif):
     return found
 
 
+def random_inputs(rng):
+    regs = [random_register(rng) for _ in range(16)]
+    regs[6] = STACK_BASE + 0x8000
+    flags = [rng.getrandbits(1) for _ in range(5)] + [0, rng.getrandbits(1)]
+    xmm = [random_xmm(rng) for _ in range(16)]
+    mem = rng.randbytes(REGION_SIZE)
+    stack = bytearray(rng.randbytes(REGION_SIZE))
+    stack[0x8000:0x8008] = struct.pack("<Q", RET_ADDR)
+    return regs, flags, xmm, mem, bytes(stack)
+
+
+def judge(kind, ref, rc, lif, events):
+    """Classify one run. Returns (outcome, description of a difference)."""
+    if kind in ("timeout", "emulator-error") or events.escaped or events.unsupported:
+        return "skipped", ""
+    if kind == "memfault" and rc == RUN_FAULT:
+        return "both-fault", ""
+    if rc == RUN_TIMEOUT:
+        return "differ", "lifted code did not finish"
+    if kind == "memfault" or rc == RUN_FAULT:
+        return "differ", f"memory fault on only one side (original {kind}, lifted code {rc})"
+    diff = differences(ref, lif)
+    if not events.returned or events.return_pc != RET_ADDR:
+        diff.insert(0, f"lifted code did not return to the caller (target {events.return_pc:#x})")
+    if not diff:
+        return "match", ""
+    # Only flags may be excused by an undefined value; registers and memory may not.
+    if events.undefined and all(d.startswith("flag ") for d in diff):
+        return "match-ignoring-flags", ""
+    return "differ", "; ".join(diff[:4])
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("exe")
     p.add_argument("--inputs", type=int, default=200)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--lift-dir", default=os.path.join(ROOT, "generated/lift"))
+    p.add_argument("--min-compared", type=int, default=20,
+                   help="compared runs needed before a function counts as verified")
+    p.add_argument("--require", type=int, default=1,
+                   help="exit with an error unless this many functions are verified")
     p.add_argument("--lib", default=os.path.join(ROOT, "generated/harness/libharness.so"))
     args = p.parse_args(argv)
 
@@ -208,59 +268,58 @@ def main(argv=None):
     reference, lifted = Reference(image), Lifted(args.lib, image)
     rng = random.Random(args.seed)
 
-    total_bad = total_compared = 0
-    print(f"{'function':>10} {'compared':>8} {'match':>6} {'differ':>6} {'both-fault':>10} "
-          f"{'skipped':>7}  note")
-    for path in sorted(glob.glob(os.path.join(args.lift_dir, "*.ll"))):
-        rva = int(os.path.basename(path).split(".")[0], 16)
+    paths = sorted(glob.glob(os.path.join(args.lift_dir, "*.ll")))
+    sources = {}
+    for path in paths:
         with open(path) as f:
-            if not is_leaf(f.read()):
-                print(f"{rva:#10x} {'':>8} {'':>6} {'':>6} {'':>10} {'':>7}  skipped: calls other functions")
-                continue
-        counts = {"match": 0, "differ": 0, "both-fault": 0, "skipped": 0}
-        examples, undefined_used = [], 0
-        for _ in range(args.inputs):
-            regs = [random_register(rng) for _ in range(16)]
-            regs[6] = STACK_BASE + 0x8000
-            flags = [rng.getrandbits(1) for _ in range(5)] + [0, rng.getrandbits(1)]
-            xmm = [random_xmm(rng) for _ in range(16)]
-            mem = rng.randbytes(REGION_SIZE)
-            stack = bytearray(rng.randbytes(REGION_SIZE))
-            stack[0x8000:0x8008] = struct.pack("<Q", RET_ADDR)
-            stack = bytes(stack)
+            sources[path] = f.read()
+    graph = call_graph(sources.values())
 
+    total_bad = total_compared = verified = 0
+    print(f"{'function':>10} {'compared':>8} {'match':>6} {'differ':>6} {'both-fault':>10} "
+          f"{'skipped':>7} {'wrote':>6}  note")
+    for path in paths:
+        rva = int(os.path.basename(path).split(".")[0], 16)
+        name = f"sub_{rva:x}"
+        if missing_callees(name, graph):
+            print(f"{rva:#10x} {'':>8} {'':>6} {'':>6} {'':>10} {'':>7} {'':>6}  "
+                  "skipped: calls functions that were not lifted")
+            continue
+        counts = {"match": 0, "differ": 0, "both-fault": 0, "skipped": 0}
+        examples, flags_ignored, wrote = [], 0, 0
+        for _ in range(args.inputs):
+            regs, flags, xmm, mem, stack = random_inputs(rng)
             kind, ref = reference.run(rva, regs, flags, xmm, mem, stack)
-            rc, lif, info = lifted.run(rva, regs, flags, xmm, mem, stack)
-            undefined_used += info[0] > 0
-            if kind in ("timeout", "emulator-error") or rc in (2, 3) or info[1]:
-                counts["skipped"] += 1
-            elif kind == "memfault" and rc == 1:
-                counts["both-fault"] += 1
-            elif (kind == "memfault") != (rc == 1):
-                counts["differ"] += 1
-                if len(examples) < 3:
-                    examples.append("memory fault on only one side "
-                                    f"(original {kind}, lifted code {rc})")
-            else:
-                diff = differences(ref, lif)
-                if diff and info[0] > 0:
-                    counts["skipped"] += 1
-                elif diff:
-                    counts["differ"] += 1
-                    if len(examples) < 3:
-                        examples.append("; ".join(diff[:4]))
-                else:
-                    counts["match"] += 1
+            rc, lif, events = lifted.run(rva, regs, flags, xmm, mem, stack)
+            outcome, detail = judge(kind, ref, rc, lif, events)
+            if outcome == "match-ignoring-flags":
+                flags_ignored += 1
+                outcome = "match"
+            counts[outcome] += 1
+            if outcome == "match" and (ref["data"] != mem or ref["stack"] != stack):
+                wrote += 1
+            if outcome == "differ" and len(examples) < 3:
+                examples.append(detail)
         compared = counts["match"] + counts["differ"]
         total_compared += compared
         total_bad += counts["differ"]
-        note = "undefined values used; mismatches there are not counted" if undefined_used else ""
+        verified += counts["differ"] == 0 and compared >= args.min_compared
+        notes = []
+        if graph[name]:
+            notes.append(f"calls {len(graph[name])}")
+        if flags_ignored:
+            notes.append(f"{flags_ignored} runs: undefined flags not compared")
+        if counts["differ"] == 0 and compared < args.min_compared:
+            notes.append("not verified: too few compared runs")
         print(f"{rva:#10x} {compared:8d} {counts['match']:6d} {counts['differ']:6d} "
-              f"{counts['both-fault']:10d} {counts['skipped']:7d}  {note}")
+              f"{counts['both-fault']:10d} {counts['skipped']:7d} {wrote:6d}  {'; '.join(notes)}")
         for example in examples:
             print(f"           example: {example}")
-    print(f"\ntotal compared {total_compared}, differing {total_bad}")
-    return 1 if total_bad else 0
+    print(f"\ntotal compared {total_compared}, differing {total_bad}, "
+          f"functions verified {verified} of {len(paths)}")
+    if total_bad:
+        return 1
+    return 0 if verified >= args.require else 1
 
 
 if __name__ == "__main__":

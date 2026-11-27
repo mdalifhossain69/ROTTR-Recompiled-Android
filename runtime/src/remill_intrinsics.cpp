@@ -1,72 +1,150 @@
-// runtime/src/remill_intrinsics.cpp
-// Native aarch64 implementations of Remill runtime intrinsics.
-// These replace the x86_64-only bitcode that Remill ships, allowing the
-// lifted .o files to link and run on an aarch64 host.
-//
-// The `memory` pointer passed to read/write intrinsics is an opaque guest
-// memory context managed by the shim (harness/shim.cpp). The shim provides
-// a flat 1 MB buffer and passes it as the third argument to lifted functions.
+// Native implementations of the Remill runtime intrinsics used by lifted code.
+// Signatures follow remill/Arch/Runtime/Intrinsics.h. `State` and `Memory` are
+// opaque here, so this file builds without the Remill headers.
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+
+#include "rottr/remill_runtime.h"
 
 extern "C" {
 
-// ---- Memory reads -------------------------------------------------------
-// The `memory` argument is the guest memory buffer passed from the shim.
-uint8_t  __remill_read_memory_8 (void* memory, uint64_t address) {
-    uint8_t v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 1); return v;
-}
-uint16_t __remill_read_memory_16(void* memory, uint64_t address) {
-    uint16_t v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 2); return v;
-}
-uint32_t __remill_read_memory_32(void* memory, uint64_t address) {
-    uint32_t v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 4); return v;
-}
-uint64_t __remill_read_memory_64(void* memory, uint64_t address) {
-    uint64_t v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 8); return v;
-}
-float    __remill_read_memory_f32(void* memory, uint64_t address) {
-    float v; memcpy(&v, static_cast<uint8_t*>(memory) + (address & 0xFFFFF), 4); return v;
+rottr_events rottr_run_events;
+
+void rottr_memory_reset(rottr_memory *memory) {
+    memory->count = 0;
 }
 
-// ---- Memory writes ------------------------------------------------------
-void* __remill_write_memory_8 (void* memory, uint64_t address, uint8_t  value) {
-    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 1); return memory;
-}
-void* __remill_write_memory_16(void* memory, uint64_t address, uint16_t value) {
-    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 2); return memory;
-}
-void* __remill_write_memory_32(void* memory, uint64_t address, uint32_t value) {
-    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 4); return memory;
-}
-void* __remill_write_memory_64(void* memory, uint64_t address, uint64_t value) {
-    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 8); return memory;
-}
-void* __remill_write_memory_f32(void* memory, uint64_t address, float value) {
-    memcpy(static_cast<uint8_t*>(memory) + (address & 0xFFFFF), &value, 4); return memory;
+int rottr_memory_add(rottr_memory *memory, uint64_t base, uint64_t size,
+                     void *host, int writable) {
+    if (memory->count >= ROTTR_MAX_REGIONS || size == 0 || host == nullptr ||
+        base + (size - 1) < base) {
+        return -1;
+    }
+    memory->regions[memory->count++] = {base, size, static_cast<uint8_t *>(host), writable};
+    return 0;
 }
 
-// ---- Control flow stubs -------------------------------------------------
-void* __remill_function_call  (void* state, uint64_t pc, void* memory) { (void)state; (void)pc; return memory; }
-void* __remill_function_return(void* state, uint64_t ra,  void* memory) { (void)state; (void)ra; return memory; }
-void* __remill_missing_block  (void* state, uint64_t pc, void* memory) { (void)state; (void)pc; return memory; }
-void* __remill_error          (void* state, uint64_t code, void* memory) { (void)state; (void)code; return memory; }
-void* __remill_sync_hyper_call(void* state, void* memory, uint32_t vector) { (void)state; (void)vector; return memory; }
+uint8_t *rottr_memory_at(rottr_memory *memory, uint64_t address, size_t size,
+                         int is_write) {
+    for (int i = 0; i < memory->count; ++i) {
+        const rottr_region &r = memory->regions[i];
+        if (address >= r.base && size <= r.size && address - r.base <= r.size - size &&
+            (!is_write || r.writable)) {
+            return r.host + (address - r.base);
+        }
+    }
+    if (memory->fault) {
+        memory->fault(address, size, is_write);
+    }
+    std::abort();
+}
 
-// ---- Undefined value ----------------------------------------------------
-uint8_t __remill_undefined_8(void) { return 0; }
+}  // extern "C"
 
-// ---- Flag computations (varargs tail ignored) ---------------------------
-uint8_t __remill_flag_computation_zero (uint8_t result, ...) { (void)result; return 0; }
-uint8_t __remill_flag_computation_carry(uint8_t result, ...) { (void)result; return 0; }
-uint8_t __remill_flag_computation_sign (uint8_t result, ...) { (void)result; return 0; }
-uint8_t __remill_flag_computation_overflow(uint8_t result, ...) { (void)result; return 0; }
+namespace {
 
-// ---- Comparisons --------------------------------------------------------
-uint8_t __remill_compare_eq  (uint8_t result) { (void)result; return 0; }
-uint8_t __remill_compare_neq (uint8_t result) { (void)result; return 0; }
-uint8_t __remill_compare_ugt (uint8_t result) { (void)result; return 0; }
-uint8_t __remill_compare_ule (uint8_t result) { (void)result; return 0; }
+template <typename T>
+T load(void *memory, uint64_t address) {
+    T value;
+    std::memcpy(&value, rottr_memory_at(static_cast<rottr_memory *>(memory), address,
+                                        sizeof(T), 0), sizeof(T));
+    return value;
+}
 
-} // extern "C"
+template <typename T>
+void *store(void *memory, uint64_t address, T value) {
+    std::memcpy(rottr_memory_at(static_cast<rottr_memory *>(memory), address,
+                                sizeof(T), 1), &value, sizeof(T));
+    return memory;
+}
+
+// Single-threaded only: these do not make the operation atomic between threads.
+template <typename T>
+void *compare_exchange(void *memory, uint64_t address, T &expected, T desired) {
+    const T current = load<T>(memory, address);
+    if (current == expected) {
+        store<T>(memory, address, desired);
+    }
+    expected = current;
+    return memory;
+}
+
+}  // namespace
+
+extern "C" {
+
+// ---- Memory -------------------------------------------------------------
+#define ROTTR_ACCESS(suffix, type)                                              \
+    type __remill_read_memory_##suffix(void *m, uint64_t a) { return load<type>(m, a); } \
+    void *__remill_write_memory_##suffix(void *m, uint64_t a, type v) { return store<type>(m, a, v); }
+ROTTR_ACCESS(8, uint8_t)
+ROTTR_ACCESS(16, uint16_t)
+ROTTR_ACCESS(32, uint32_t)
+ROTTR_ACCESS(64, uint64_t)
+ROTTR_ACCESS(f32, float)
+ROTTR_ACCESS(f64, double)
+#undef ROTTR_ACCESS
+
+#define ROTTR_CMPXCHG(bits)                                                     \
+    void *__remill_compare_exchange_memory_##bits(void *m, uint64_t a,          \
+                                                  uint##bits##_t &expected,     \
+                                                  uint##bits##_t desired) {     \
+        return compare_exchange<uint##bits##_t>(m, a, expected, desired);       \
+    }
+ROTTR_CMPXCHG(8)
+ROTTR_CMPXCHG(16)
+ROTTR_CMPXCHG(32)
+ROTTR_CMPXCHG(64)
+#undef ROTTR_CMPXCHG
+
+void *__remill_barrier_load_load(void *m) { return m; }
+void *__remill_barrier_load_store(void *m) { return m; }
+void *__remill_barrier_store_load(void *m) { return m; }
+void *__remill_barrier_store_store(void *m) { return m; }
+void *__remill_atomic_begin(void *m) { return m; }
+void *__remill_atomic_end(void *m) { return m; }
+
+// ---- Control flow -------------------------------------------------------
+// Direct calls are lifted as calls to sub_<address>. Anything that arrives here
+// other than a return left the lifted code, and is recorded as such.
+void *__remill_function_return(void *, uint64_t pc, void *m) {
+    rottr_run_events.returned = 1;
+    rottr_run_events.return_pc = pc;
+    return m;
+}
+void *__remill_function_call(void *, uint64_t, void *m) { ++rottr_run_events.escaped; return m; }
+void *__remill_jump(void *, uint64_t, void *m) { ++rottr_run_events.escaped; return m; }
+void *__remill_missing_block(void *, uint64_t, void *m) { ++rottr_run_events.escaped; return m; }
+void *__remill_error(void *, uint64_t, void *m) { ++rottr_run_events.unsupported; return m; }
+void *__remill_async_hyper_call(void *, uint64_t, void *m) { ++rottr_run_events.unsupported; return m; }
+void *__remill_sync_hyper_call(void *, void *m, uint32_t) { ++rottr_run_events.unsupported; return m; }
+
+// ---- Undefined values ---------------------------------------------------
+uint8_t  __remill_undefined_8(void)  { ++rottr_run_events.undefined; return 0; }
+uint16_t __remill_undefined_16(void) { ++rottr_run_events.undefined; return 0; }
+uint32_t __remill_undefined_32(void) { ++rottr_run_events.undefined; return 0; }
+uint64_t __remill_undefined_64(void) { ++rottr_run_events.undefined; return 0; }
+float    __remill_undefined_f32(void) { ++rottr_run_events.undefined; return 0.0f; }
+double   __remill_undefined_f64(void) { ++rottr_run_events.undefined; return 0.0; }
+
+// ---- Flags and comparisons ----------------------------------------------
+// The lifted code has already computed the result; these must return it.
+bool __remill_flag_computation_zero(bool result, ...) { return result; }
+bool __remill_flag_computation_sign(bool result, ...) { return result; }
+bool __remill_flag_computation_overflow(bool result, ...) { return result; }
+bool __remill_flag_computation_carry(bool result, ...) { return result; }
+
+bool __remill_compare_eq(bool result) { return result; }
+bool __remill_compare_neq(bool result) { return result; }
+bool __remill_compare_slt(bool result) { return result; }
+bool __remill_compare_sle(bool result) { return result; }
+bool __remill_compare_sgt(bool result) { return result; }
+bool __remill_compare_sge(bool result) { return result; }
+bool __remill_compare_ult(bool result) { return result; }
+bool __remill_compare_ule(bool result) { return result; }
+bool __remill_compare_ugt(bool result) { return result; }
+bool __remill_compare_uge(bool result) { return result; }
+
+}  // extern "C"

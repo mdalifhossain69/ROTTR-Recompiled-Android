@@ -134,7 +134,7 @@ class HarnessTest(unittest.TestCase):
             self.assertGreater(int(good[1]), 0)            # compared
             self.assertEqual(int(good[3]), 0)              # none differ
             self.assertGreater(int(bad[3]), 0)             # wrong code is caught
-            self.assertIn("skipped: calls other functions", skipped)
+            self.assertIn("skipped: calls functions that were not lifted", skipped)
             self.assertEqual(code, 1)                      # overall failure because of 0x2000
 
 
