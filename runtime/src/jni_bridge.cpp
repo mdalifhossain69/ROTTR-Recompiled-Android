@@ -107,6 +107,7 @@ static void initialize_window(int width, int height, ANativeWindow* window) {
     video_set_native_window(window);
     const bool graphicsOk = graphics_init(width, height, window);
     LOGI("JNI: graphics_init returned %s", graphicsOk ? "true" : "false");
+    LOGE("JNI: Activity bridge has no frame-pump thread; android_main is not entered by the regular Activity");
     if (!graphicsOk) {
         LOGE("JNI: graphics_init failed; rendering cannot start");
     }
