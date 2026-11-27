@@ -1,6 +1,10 @@
-# Executable analysis record
+# ROTTR executable inspection record
 
-This document records read-only analysis performed on 2026-11-26 against an owner-supplied ROTTR executable. The executable itself is not stored in this repository.
+**Inspection type:** read-only PE metadata analysis  
+**Recorded date:** 2026-11-26  
+**Input:** owner-supplied executable; the executable is not stored in this repository.
+
+This is a historical inspection record. It is not a loader, execution test, DRM assessment or compatibility result.
 
 | Item | Observed value |
 |---|---|
@@ -12,7 +16,7 @@ This document records read-only analysis performed on 2026-11-26 against an owne
 | .pdata size | 864,600 bytes |
 | .shader size | 7,037,656 bytes |
 
-The inspection found no protection indicators using the tool's heuristics. **This is not proof that the executable is DRM-free or that ownership checks are absent.** The report does not authorize patching or bypassing protection.
+The inspection tool's heuristics reported no protection indicators. **This does not prove the executable is DRM-free or that ownership checks are absent.** It does not authorize patching or bypassing protection.
 
 ## Observed imports
 
@@ -26,12 +30,17 @@ The inspection found no protection indicators using the tool's heuristics. **Thi
 
 The absence of a statically listed Direct3D DLL does not prove that the game does not use Direct3D; it may resolve graphics APIs dynamically.
 
-## What this report does not establish
+## What this record establishes
 
-- It does not load or execute the executable.
-- It does not establish that the file is unprotected.
-- It does not establish that the import list is complete for dynamically loaded modules.
-- It does not prove that the game can run on Android.
+- The inspected file was identified as PE32+ AMD64/x86-64.
+- The listed metadata and imports were observed by the read-only inspection process.
+
+## What it does not establish
+
+- It does not map or execute the executable.
+- It does not establish that the file is unprotected or that ownership checks are absent.
+- It does not prove the import list is complete for dynamically loaded modules.
+- It does not prove the game can run on Android.
 - It does not replace runtime tracing of the actual game.
 
-Preserve Steam/EOS ownership checks and use a legitimate user-owned game installation.
+Preserve Steam/EOS ownership checks and use a legitimate user-owned installation.
