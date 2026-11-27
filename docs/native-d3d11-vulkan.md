@@ -21,11 +21,20 @@ A Direct3D-to-Vulkan layer does not translate x64 CPU instructions. CPU recompil
 - Added overflow-safe size arithmetic; unsupported formats return no mapping/zero sizes rather than guessing.
 - Added host unit tests and made the Android workflow run host tests before building the APK.
 
+## Shader translation milestone
+
+Added `runtime/src/graphics/dxbc_shader.*`:
+- Bounds-checked DXBC container parsing for SHDR/SHEX chunks, shader stage, shader-model version, and token-stream length.
+- A real DXBC-to-SPIR-V compiler adapter using the vkd3d-shader API when that library is linked; validates the returned SPIR-V magic/word alignment and reports compiler errors rather than producing placeholder modules.
+- CMake auto-detects an externally provisioned `vkd3d-shader` header/library on Android. Without it, container inspection and tests still build, but shader compilation explicitly returns `CompilerUnavailable`.
+- Host tests cover valid shader headers, malformed offsets/sizes/token counts, and unsupported stages.
+
+**Important dependency status:** vkd3d-shader is not vendored or built by this repository yet. Therefore this commit adds the DXBC parsing and compiler integration seam, not a bundled, ready-to-run shader compiler. The Android build must provision a compatible ARM64 vkd3d-shader build before DXBC shaders can actually be translated at runtime.
+
 ## Not yet implemented
 
 - D3D11 COM object/device/context ABI and lifetime model.
-- Buffer and texture allocation/binding on Vulkan.
-- DXBC shader decoding and translation to SPIR-V.
+- Shader compiler provisioning and complete shader translation validation against ROTTR's actual shader corpus.
 - D3D11 input assembler, rasterizer, blend, depth/stencil, render-target and sampler state translation.
 - Command-list submission, synchronization, resource barriers/layout tracking, MSAA resolve.
 - Actual game-code ARM64 recompilation and Windows API coverage.
