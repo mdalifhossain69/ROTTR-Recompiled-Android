@@ -14,7 +14,7 @@ bool expect(bool condition, const char* message) {
 int main() {
     // mov rax, 7; mov rcx, 5; add rax, rcx; push rax; xor rax, rax;
     // pop rdx; cmp rdx, 12; jne fail; hlt; fail: hlt
-    constexpr std::array<uint8_t, 37> code = {
+    constexpr std::array<uint8_t, 36> code = {
         0x48,0xb8,7,0,0,0,0,0,0,0,
         0x48,0xb9,5,0,0,0,0,0,0,0,
         0x48,0x01,0xc8,
