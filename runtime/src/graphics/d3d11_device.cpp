@@ -144,6 +144,10 @@ void ImmediateContext::setRenderTarget(ResourcePtr r) {
 void ImmediateContext::setTopology(PrimitiveTopology t) {
     std::lock_guard<std::mutex> lock(mutex_); topology_ = t;
 }
+bool ImmediateContext::setGraphicsPipeline(uint64_t pipeline) {
+    if (pipeline == 0 || !device_.valid() || !device_.backend()->bindGraphicsPipeline(pipeline)) return false;
+    std::lock_guard<std::mutex> lock(mutex_); graphicsPipeline_ = pipeline; return true;
+}
 bool ImmediateContext::hasVertexBuffer() const {
     return std::any_of(vertexBuffers_.begin(), vertexBuffers_.end(), [](const ResourcePtr& r) {
         return r && r->alive;
@@ -152,7 +156,12 @@ bool ImmediateContext::hasVertexBuffer() const {
 bool ImmediateContext::draw(uint32_t count, uint32_t start, uint32_t instances, uint32_t firstInstance) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!device_.valid() || count == 0 || instances == 0 || topology_ == PrimitiveTopology::Undefined ||
-        !hasVertexBuffer()) return false;
+        graphicsPipeline_ == 0 || !hasVertexBuffer()) return false;
+    for (uint32_t slot = 0; slot < vertexBuffers_.size(); ++slot) {
+        if (vertexBuffers_[slot] && (!vertexBuffers_[slot]->alive ||
+            !device_.backend()->bindVertexBuffer(slot, vertexBuffers_[slot]->id,
+                                                 vertexStrides_[slot], vertexOffsets_[slot]))) return false;
+    }
     if (!device_.backend()->draw(count, start, instances, firstInstance)) return false;
     DrawCommand c; c.type = DrawCommand::Type::Draw; c.a = count; c.b = start; c.c = instances; c.d = firstInstance;
     commands_.push_back(c); ++drawCalls_; return true;
@@ -160,11 +169,18 @@ bool ImmediateContext::draw(uint32_t count, uint32_t start, uint32_t instances, 
 bool ImmediateContext::drawIndexed(uint32_t count, uint32_t start, int32_t base, uint32_t instances) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!device_.valid() || count == 0 || instances == 0 || topology_ == PrimitiveTopology::Undefined ||
-        !hasVertexBuffer() || !indexBuffer_ || !indexBuffer_->alive) return false;
+        !hasVertexBuffer() || graphicsPipeline_ == 0 || !indexBuffer_ || !indexBuffer_->alive) return false;
     const uint64_t bytes = static_cast<uint64_t>(count) * (indexFormat_ == IndexFormat::UInt16 ? 2U : 4U);
     if (static_cast<uint64_t>(indexOffset_) + static_cast<uint64_t>(start) *
         (indexFormat_ == IndexFormat::UInt16 ? 2U : 4U) + bytes > indexBuffer_->buffer.byteWidth) return false;
-    if (!device_.backend()->drawIndexed(count, start, base, instances)) return false;
+    for (uint32_t slot = 0; slot < vertexBuffers_.size(); ++slot) {
+        if (vertexBuffers_[slot] && (!vertexBuffers_[slot]->alive ||
+            !device_.backend()->bindVertexBuffer(slot, vertexBuffers_[slot]->id,
+                                                 vertexStrides_[slot], vertexOffsets_[slot]))) return false;
+    }
+    if (!device_.backend()->bindIndexBuffer(indexBuffer_->id, indexFormat_, indexOffset_ +
+            start * (indexFormat_ == IndexFormat::UInt16 ? 2U : 4U))) return false;
+    if (!device_.backend()->drawIndexed(count, 0, base, instances)) return false;
     DrawCommand c; c.type = DrawCommand::Type::DrawIndexed; c.a = count; c.b = start;
     c.c = static_cast<uint32_t>(base); c.d = instances; c.resource = indexBuffer_->id;
     commands_.push_back(c); ++drawCalls_; return true;
@@ -184,7 +200,7 @@ bool ImmediateContext::copyResource(const ResourcePtr& dst, const ResourcePtr& s
 void ImmediateContext::clearState() {
     std::lock_guard<std::mutex> lock(mutex_);
     vertexBuffers_.fill(nullptr); constantBuffers_.fill(nullptr); shaderResources_.fill(nullptr);
-    indexBuffer_.reset(); renderTarget_.reset(); topology_ = PrimitiveTopology::Undefined;
+    indexBuffer_.reset(); renderTarget_.reset(); topology_ = PrimitiveTopology::Undefined; graphicsPipeline_ = 0;
     DrawCommand c; c.type = DrawCommand::Type::ClearState; commands_.push_back(c);
 }
 std::vector<DrawCommand> ImmediateContext::takeCommands() {
