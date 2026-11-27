@@ -236,11 +236,21 @@ struct RexPrefix {
 bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
                         Decoder& decoder, const RexPrefix& rex,
                         uint8_t opcode, size_t opSizeOverride,
-                        bool& ripUpdated, X64StopReason& stopReason) {
+                        unsigned repPrefix, bool& ripUpdated,
+                        X64StopReason& stopReason) {
     ripUpdated = false;
     stopReason = X64StopReason::InvalidMemory;
     const bool rexW = rex.w;
     const size_t opSize = rexW ? 8 : (opSizeOverride == 2 ? 2 : 8);
+
+    // ---- MOV: B0+r (mov r8, imm8) ----
+    if (opcode >= 0xb0 && opcode <= 0xb7) {
+        unsigned regIndex = (opcode & 7) | (rex.r << 3);
+        uint8_t v = 0;
+        if (!decoder.immediate(v)) return false;
+        reg(cpu, regIndex) = (reg(cpu, regIndex) & ~0xffULL) | static_cast<uint64_t>(v);
+        return true;
+    }
 
     // ---- MOV: B8+r (mov r64/r32, imm) ----
     if (opcode >= 0xb8 && opcode <= 0xbf) {
@@ -576,6 +586,73 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         return true;
     }
 
+    // ---- String instructions: MOVS/CMPS/SCAS/LODS/STOS (with REP prefixes) ----
+    if (opcode >= 0xa4 && opcode <= 0xaf) {
+        bool isMovs = (opcode == 0xa4 || opcode == 0xa5);
+        bool isCmps = (opcode == 0xa6 || opcode == 0xa7);
+        bool isScas = (opcode == 0xae || opcode == 0xaf);
+        bool isLods = (opcode == 0xac || opcode == 0xad);
+        bool isStos = (opcode == 0xaa || opcode == 0xab);
+
+        size_t size = (opcode == 0xa4 || opcode == 0xa6 || opcode == 0xae ||
+                       opcode == 0xac || opcode == 0xaa) ? 1 : opSize;
+        bool df = (cpu.rflags & (1ULL << 10)) != 0;
+
+        do {
+            if (isMovs) {
+                uint64_t src = 0;
+                if (!readGuest(memory, cpu.gpr[6], &src, size)) return false;
+                if (!writeGuest(memory, cpu.gpr[7], &src, size)) return false;
+                cpu.gpr[6] += df ? -(int64_t)size : (int64_t)size;
+                cpu.gpr[7] += df ? -(int64_t)size : (int64_t)size;
+            } else if (isCmps) {
+                uint64_t src = 0, dst = 0;
+                if (!readGuest(memory, cpu.gpr[6], &src, size)) return false;
+                if (!readGuest(memory, cpu.gpr[7], &dst, size)) return false;
+                updateArithmeticFlags(cpu, dst - src, dst, src, true, size);
+                cpu.gpr[6] += df ? -(int64_t)size : (int64_t)size;
+                cpu.gpr[7] += df ? -(int64_t)size : (int64_t)size;
+            } else if (isScas) {
+                uint64_t mask = (size == 8) ? ~0ULL : ((1ULL << (size * 8)) - 1);
+                uint64_t al = cpu.gpr[0] & mask;
+                uint64_t dst = 0;
+                if (!readGuest(memory, cpu.gpr[7], &dst, size)) return false;
+                updateArithmeticFlags(cpu, al - dst, al, dst, true, size);
+                cpu.gpr[7] += df ? -(int64_t)size : (int64_t)size;
+            } else if (isLods) {
+                uint64_t value = 0;
+                if (!readGuest(memory, cpu.gpr[6], &value, size)) return false;
+                if (size == 8) cpu.gpr[0] = value;
+                else if (size == 4) cpu.gpr[0] = static_cast<uint32_t>(value);
+                else if (size == 2) cpu.gpr[0] = static_cast<uint16_t>(value);
+                else cpu.gpr[0] = static_cast<uint8_t>(value);
+                cpu.gpr[6] += df ? -(int64_t)size : (int64_t)size;
+            } else if (isStos) {
+                uint64_t mask = (size == 8) ? ~0ULL : ((1ULL << (size * 8)) - 1);
+                uint64_t value = cpu.gpr[0] & mask;
+                if (!writeGuest(memory, cpu.gpr[7], &value, size)) return false;
+                cpu.gpr[7] += df ? -(int64_t)size : (int64_t)size;
+            }
+
+            cpu.gpr[1] -= 1;
+
+            if (repPrefix == 0) break;
+            if (cpu.gpr[1] == 0) break;
+            if (repPrefix == 1) {
+                if (isMovs || isLods || isStos) continue;
+                if ((cpu.rflags & kFlagZero) == 0) break;
+                continue;
+            }
+            if (repPrefix == 2) {
+                if (isMovs || isLods || isStos) continue;
+                if ((cpu.rflags & kFlagZero) != 0) break;
+                continue;
+            }
+        } while (true);
+
+        return true;
+    }
+
     // ---- C1 /0 ib (shl r64, imm8) ----
     // ---- C1 /4 ib (shr r64, imm8) ----
     // ---- C1 /5 ib (sar r64, imm8) ----
@@ -782,9 +859,12 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
 
         RexPrefix rex{};
         size_t opSizeOverride = 8; // default 64-bit
+        unsigned repPrefix = 0; // 0 = none, 1 = F3 (REP/REPE/REPZ), 2 = F2 (REPNE/REPNZ)
         // Legacy prefixes: 0x66 = operand-size override (16-bit)
         while (first == 0x66 || first == 0xf2 || first == 0xf3) {
             if (first == 0x66) opSizeOverride = 2;
+            else if (first == 0xf2) repPrefix = 2;
+            else if (first == 0xf3) repPrefix = 1;
             if (!decoder.byte(first)) {
                 result.reason = X64StopReason::InvalidMemory;
                 result.faultAddress = decoder.next();
@@ -809,7 +889,7 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
 
         bool ripUpdated = false;
         X64StopReason stopReason = X64StopReason::UnsupportedInstruction;
-        bool ok = executeInstruction(cpu, memory, decoder, rex, first, opSizeOverride, ripUpdated, stopReason);
+        bool ok = executeInstruction(cpu, memory, decoder, rex, first, opSizeOverride, repPrefix, ripUpdated, stopReason);
         if (!ok) {
             std::fprintf(stderr, "DEBUG: executeInstruction failed at 0x%llx opcode=0x%02x stopReason=%d\n",
                     (unsigned long long)instStart, first, (int)stopReason);

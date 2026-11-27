@@ -367,14 +367,14 @@ extern "C" uint64_t host_ExitProcess(uint64_t exitCode, uint64_t, uint64_t,
     return 0;
 }
 
-bool isExitRequested() { return g_exitRequested.load(); }
-uint32_t getExitCode() { return g_exitCode; }
-
 // =====================================================================
 // Register host modules with their exports
 // =====================================================================
 
 namespace rottr {
+
+bool isExitRequested() { return g_exitRequested.load(); }
+uint32_t getExitCode() { return g_exitCode; }
 
 void registerHostModules() {
     HostModule k32;

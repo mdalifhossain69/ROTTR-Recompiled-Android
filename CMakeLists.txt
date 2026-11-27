@@ -97,6 +97,11 @@ target_link_libraries(test_x64_bridge PRIVATE rottr_core)
 target_compile_options(test_x64_bridge PRIVATE -Wall -Wextra -Werror)
 add_test(NAME x64_bridge COMMAND test_x64_bridge)
 
+add_executable(test_win32_exit tests/test_win32_exit.cpp)
+target_link_libraries(test_win32_exit PRIVATE rottr_core)
+target_compile_options(test_win32_exit PRIVATE -Wall -Wextra -Werror)
+add_test(NAME win32_exit COMMAND test_win32_exit)
+
 add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
 target_link_libraries(test_x64_runtime PRIVATE rottr_core)
 target_compile_options(test_x64_runtime PRIVATE -Wall -Wextra -Werror)

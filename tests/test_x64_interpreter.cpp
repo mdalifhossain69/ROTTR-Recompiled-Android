@@ -339,6 +339,99 @@ int main() {
         return 1;
     }
 
+    // String instructions: rep movsb copies bytes from RSI to RDI.
+    constexpr uint8_t movsbProgram[] = {
+        0x48,0xbe,0x40,0x10,0,0,0,0,0,0, // mov rsi, 0x1040
+        0x48,0xbf,0x80,0x10,0,0,0,0,0,0, // mov rdi, 0x1080
+        0x48,0xb9,8,0,0,0,0,0,0,0,      // mov rcx, 8
+        0xf3,0xa4,                    // rep movsb
+        0xf4                          // hlt
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(movsbProgram); ++i) memory[i] = movsbProgram[i];
+    for (size_t i = 0; i < 8; ++i) memory[0x40 + i] = static_cast<uint8_t>(i + 1);
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 64);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "rep movsb must reach HLT") ||
+        !expect(cpu.gpr[6] == 0x1048, "rep movsb must advance RSI") ||
+        !expect(cpu.gpr[7] == 0x1088, "rep movsb must advance RDI") ||
+        !expect(cpu.gpr[1] == 0, "rep movsb must zero RCX")) {
+        return 1;
+    }
+    for (size_t i = 0; i < 8; ++i) {
+        if (!expect(memory[0x80 + i] == static_cast<uint8_t>(i + 1),
+                    "rep movsb must copy source data to destination")) {
+            return 1;
+        }
+    }
+
+    // stosb with REP fills memory with AL.
+    constexpr uint8_t stosbProgram[] = {
+        0x48,0xbf,0x80,0x10,0,0,0,0,0,0, // mov rdi, 0x1080
+        0x48,0xb9,8,0,0,0,0,0,0,0,      // mov rcx, 8
+        0xb0,0x5a,                      // mov al, 0x5a
+        0xf3,0xaa,                      // rep stosb
+        0xf4                          // hlt
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(stosbProgram); ++i) memory[i] = stosbProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 64);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "rep stosb must reach HLT") ||
+        !expect(cpu.gpr[7] == 0x1088, "rep stosb must advance RDI") ||
+        !expect(cpu.gpr[1] == 0, "rep stosb must zero RCX")) {
+        return 1;
+    }
+    for (size_t i = 0; i < 8; ++i) {
+        if (!expect(memory[0x80 + i] == 0x5a,
+                    "rep stosb must fill destination with AL")) {
+            return 1;
+        }
+    }
+
+    // lodsb loads a byte from RSI into AL and advances RSI.
+    constexpr uint8_t lodsbProgram[] = {
+        0x48,0xbe,0x40,0x10,0,0,0,0,0,0, // mov rsi, 0x1040
+        0xac,                          // lodsb
+        0xf4                          // hlt
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(lodsbProgram); ++i) memory[i] = lodsbProgram[i];
+    memory[0x40] = 0xab;
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 8);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "lodsb must reach HLT") ||
+        !expect(cpu.gpr[0] == 0xab, "lodsb must load byte into AL") ||
+        !expect(cpu.gpr[6] == 0x1041, "lodsb must advance RSI")) {
+        return 1;
+    }
+
+    // scasb with REPNE scans for a byte equal to AL; stops when found.
+    constexpr uint8_t scasbProgram[] = {
+        0x48,0xbf,0x40,0x10,0,0,0,0,0,0, // mov rdi, 0x1040
+        0x48,0xb9,4,0,0,0,0,0,0,0,      // mov rcx, 4
+        0xb0,0x03,                      // mov al, 3
+        0xf2,0xae,                      // repne scasb
+        0xf4                          // hlt
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(scasbProgram); ++i) memory[i] = scasbProgram[i];
+    memory[0x40] = 1;  // [0x1040] = 1
+    memory[0x41] = 2;  // [0x1041] = 2
+    memory[0x42] = 3;  // [0x1042] = 3 (target)
+    memory[0x43] = 4;  // [0x1043] = 4
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = rottr::runX64Interpreter(cpu, guest, 16);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "repne scasb must reach HLT") ||
+        !expect(cpu.gpr[7] == 0x1043, "repne scasb must point RDI past found byte") ||
+        !expect(cpu.gpr[1] == 1, "repne scasb must decrement RCX for each comparison")) {
+        return 1;
+    }
+
     std::puts("OK");
     return 0;
 }

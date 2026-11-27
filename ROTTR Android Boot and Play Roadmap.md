@@ -62,7 +62,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 
 29. ✅ Build the guest-to-host call bridge using the Windows x64 convention. **Pass:** bridge, HostProc calling convention, guest-to-host address mapping implemented in `runtime/src/x64_bridge.{h,cpp}` and `runtime/src/win32_host.cpp`. `tests/test_x64_bridge` passes host→guest (step 29) and guest→host callback (step 30) on host.
 30. ✅ Support host-to-guest callbacks. **Pass:** nested callbacks preserve all nonvolatile registers; `tests/test_x64_bridge` verifies guest callback 7+8=15 in RAX on host.
-31. Implement process exit, last-error, module and command-line APIs. **Pass:** your EXE calls `ExitProcess(42)` and the app reports 42.
+31. ✅ Implement process exit, last-error, module and command-line APIs. **Pass:** your EXE calls `ExitProcess(42)` and the app reports 42 (`tests/test_win32_exit`, host); `GetLastError`/`SetLastError` stubs implemented in `runtime/src/win32_host.cpp`.
 32. Implement handles. **Pass:** invalid and closed handles return correct errors.
 33. Implement heaps. **Pass:** a million random allocate and free operations show no corruption.
 34. Implement files and paths, mapping the game folder through Android storage. **Pass:** case-insensitive open, seek past 4 GB and directory listing work.
