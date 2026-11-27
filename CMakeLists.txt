@@ -19,6 +19,7 @@ set_target_properties(rottr_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(ANDROID)
     add_library(rottr_runtime STATIC
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/graphics.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/graphics/dxgi_vk_format.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/audio/audio.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/input/input.cpp
         ${CMAKE_CURRENT_LIST_DIR}/runtime/src/input/touch_controls.cpp
@@ -62,6 +63,11 @@ add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
 target_link_libraries(test_x64_runtime PRIVATE rottr_core)
 target_compile_options(test_x64_runtime PRIVATE -Wall -Wextra -Werror)
 add_test(NAME x64_runtime COMMAND test_x64_runtime)
+
+add_executable(test_dxgi_vk_format tests/test_dxgi_vk_format.cpp runtime/src/graphics/dxgi_vk_format.cpp)
+target_include_directories(test_dxgi_vk_format PRIVATE runtime/src)
+target_compile_options(test_dxgi_vk_format PRIVATE -Wall -Wextra -Werror)
+add_test(NAME dxgi_vk_format COMMAND test_dxgi_vk_format)
 
 find_package(Vulkan)
 if(Vulkan_FOUND)
