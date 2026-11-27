@@ -279,6 +279,66 @@ int main() {
         return 1;
     }
 
+
+    // 8/16-bit arithmetic preserves unaffected register bits; 32-bit writes clear upper bits.
+    constexpr uint8_t partialWidthProgram[] = {
+        0x66,0x01,0xc8, // add ax, cx
+        0x40,0x00,0xc8, // add al, cl (REX makes SPL/BPL/... byte names available)
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(partialWidthProgram); ++i)
+        memory[i] = partialWidthProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    cpu.gpr[0] = 0x1122334455660001ULL;
+    cpu.gpr[1] = 2;
+    result = rottr::runX64Interpreter(cpu, guest, 8);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "16-bit and 8-bit arithmetic must reach HLT") ||
+        !expect(cpu.gpr[0] == 0x1122334455660005ULL,
+                "16-bit and 8-bit writes must preserve upper register bits")) {
+        return 1;
+    }
+
+    constexpr uint8_t dwordArithmeticProgram[] = {
+        0x01,0xd8, // add eax, ebx
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(dwordArithmeticProgram); ++i)
+        memory[i] = dwordArithmeticProgram[i];
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    cpu.gpr[0] = 0xffffffffffffffffULL;
+    cpu.gpr[3] = 2;
+    result = rottr::runX64Interpreter(cpu, guest, 8);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "32-bit arithmetic must reach HLT") ||
+        !expect(cpu.gpr[0] == 1,
+                "32-bit arithmetic result must zero the upper register half")) {
+        return 1;
+    }
+
+    // Byte arithmetic also operates on memory without touching adjacent bytes.
+    constexpr uint8_t byteMemoryProgram[] = {
+        0x40,0x00,0x0b, // add byte [rbx], cl
+        0xf4
+    };
+    memory.fill(0);
+    for (size_t i = 0; i < sizeof(byteMemoryProgram); ++i)
+        memory[i] = byteMemoryProgram[i];
+    memory[0xd0] = 0xfe;
+    memory[0xd1] = 0x7a;
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    cpu.gpr[3] = 0x10d0;
+    cpu.gpr[1] = 1;
+    result = rottr::runX64Interpreter(cpu, guest, 8);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "byte memory arithmetic must reach HLT") ||
+        !expect(memory[0xd0] == 0xff && memory[0xd1] == 0x7a,
+                "byte memory arithmetic must preserve adjacent bytes")) {
+        return 1;
+    }
+
     std::puts("OK");
     return 0;
 }
