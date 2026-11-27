@@ -40,6 +40,15 @@ public final class NativeBridge {
         if (sNativeAvailable) nativeSetStagesDone(count);
     }
 
+    /**
+     * Read-only header check of an open Windows executable; safe on a background thread.
+     * The first line of the result is "1" if it passed, otherwise "0".
+     */
+    public static String inspectExe(int fd) {
+        return sNativeAvailable ? nativeInspectExe(fd) : "0\nNative library unavailable\n";
+    }
+
+    private static native String nativeInspectExe(int fd);
     private static native boolean nativeSetSurface(Surface surface);
     private static native void nativeReleaseSurface();
     private static native void nativeSetStagesDone(int count);

@@ -114,7 +114,42 @@ public class MainActivity extends Activity {
         NativeBridge.setStagesDone(1);
         setContentView(boot);
         boot.addLine("Game launch is not available yet: translating and running the game's code, "
-                + "and its Windows and DirectX functions, are not implemented.");
+                + "and its Windows and DirectX functions, are not implemented.\n");
+        boot.addLine("Checking ROTTR.exe (read-only)...");
+        checkGameExe(boot, gameFolder);
+    }
+
+    private void checkGameExe(BootScreen boot, Uri folder) {
+        new Thread(() -> {
+            String report;
+            boolean passed = false;
+            try {
+                Uri exe = GameFolder.findFile(getContentResolver(), folder, "ROTTR.exe");
+                if (exe == null) {
+                    report = "ROTTR.exe was not found directly inside the selected folder.";
+                } else {
+                    try (android.os.ParcelFileDescriptor file =
+                                 getContentResolver().openFileDescriptor(exe, "r")) {
+                        if (file == null) throw new java.io.IOException("file could not be opened");
+                        String result = NativeBridge.inspectExe(file.getFd());
+                        passed = result.startsWith("1\n");
+                        report = result.substring(result.indexOf('\n') + 1);
+                    }
+                }
+            } catch (Exception error) {
+                LogUtils.exception("check ROTTR.exe", error);
+                report = "Could not check ROTTR.exe: " + error.getMessage()
+                        + "\nTry selecting the game folder again.";
+            }
+            final String text = report;
+            final boolean ok = passed;
+            runOnUiThread(() -> {
+                // The user may have gone back while the file was being read.
+                if (isDestroyed() || !boot.isAttachedToWindow()) return;
+                if (ok) NativeBridge.setStagesDone(2);
+                boot.addLine(text);
+            });
+        }, "ROTTR-exe-check").start();
     }
 
     @Override public void onBackPressed() {

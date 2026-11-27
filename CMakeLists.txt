@@ -34,7 +34,8 @@ if(ANDROID)
 
     add_library(rottr_android SHARED ${CMAKE_CURRENT_LIST_DIR}/runtime/src/android_main.cpp
                                        ${CMAKE_CURRENT_LIST_DIR}/runtime/src/jni_bridge.cpp
-                                       ${CMAKE_CURRENT_LIST_DIR}/runtime/src/vk/vulkan_renderer.cpp)
+                                       ${CMAKE_CURRENT_LIST_DIR}/runtime/src/vk/vulkan_renderer.cpp
+                                       ${CMAKE_CURRENT_LIST_DIR}/runtime/src/pe_inspect.cpp)
     target_include_directories(rottr_android PRIVATE ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
     target_link_libraries(rottr_android PRIVATE rottr_runtime android log OpenSLES vulkan aaudio)
     target_compile_options(rottr_android PRIVATE -Wall -Wextra -Werror)
@@ -48,6 +49,12 @@ enable_testing()
 add_executable(test_guest tests/test_guest.c)
 target_link_libraries(test_guest PRIVATE rottr_core)
 add_test(NAME guest COMMAND test_guest)
+
+add_executable(test_pe_inspect tests/test_pe_inspect.cpp runtime/src/pe_inspect.cpp)
+target_include_directories(test_pe_inspect PRIVATE runtime/include)
+target_compile_features(test_pe_inspect PRIVATE cxx_std_17)
+target_compile_options(test_pe_inspect PRIVATE -Wall -Wextra -Werror)
+add_test(NAME pe_inspect COMMAND test_pe_inspect)
 
 add_executable(test_runtime tests/test_runtime.cpp)
 target_link_libraries(test_runtime PRIVATE rottr_core)

@@ -8,11 +8,18 @@
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_android.h>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <new>
+#include <string>
 #include <thread>
+#include <vector>
 
+#include "rottr/pe_inspect.h"
 #include "rottr/vulkan_renderer.h"
 
 #define LOG_TAG "ROTTR-Vulkan"
@@ -81,9 +88,40 @@ bool start_rendering(ANativeWindow* window) {
     return true;
 }
 
+// Reads the whole file behind fd (which stays owned by the caller) and checks its headers.
+std::string inspect_fd(int fd, bool& passed) {
+    constexpr off_t kMaxBytes = 512 * 1024 * 1024;
+    struct stat info{};
+    if (fstat(fd, &info) != 0 || info.st_size <= 0 || info.st_size > kMaxBytes)
+        return "Header check failed: cannot size the file, or it is empty or over 512 MiB\n";
+    std::vector<uint8_t> bytes;
+    try {
+        bytes.resize(static_cast<size_t>(info.st_size));
+    } catch (const std::bad_alloc&) {
+        return "Header check failed: not enough memory\n";
+    }
+    size_t done = 0;
+    while (done < bytes.size()) {
+        const ssize_t n = pread(fd, bytes.data() + done, bytes.size() - done, static_cast<off_t>(done));
+        if (n <= 0) return "Header check failed: could not read the file\n";
+        done += static_cast<size_t>(n);
+    }
+    const rottr::PeReport report = rottr::inspectPe(bytes.data(), bytes.size());
+    passed = report.passed();
+    return rottr::describePe(report);
+}
+
 }  // namespace
 
 extern "C" {
+
+// Returns "1\n<report>" if the check passed, otherwise "0\n<report>". Report text is ASCII.
+JNIEXPORT jstring JNICALL
+Java_com_rottr_recomp_NativeBridge_nativeInspectExe(JNIEnv* env, jclass, jint fd) {
+    bool passed = false;
+    const std::string text = inspect_fd(fd, passed);
+    return env->NewStringUTF(((passed ? "1\n" : "0\n") + text).c_str());
+}
 
 JNIEXPORT jboolean JNICALL
 Java_com_rottr_recomp_NativeBridge_nativeSetSurface(JNIEnv* env, jclass, jobject surface) {
