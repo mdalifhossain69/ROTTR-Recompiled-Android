@@ -43,7 +43,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 15. Create PEB, TEB, stack and the GS base. **Pass:** `gs:[0x30]` returns the TEB and `gs:[0x60]` the PEB.
 16. Set up static TLS and TLS callbacks (build this test with the MSVC target). **Pass:** callback runs before entry; variable has its initial value.
 17. Call `DllMain` and entry points in dependency order. **Pass:** logged order matches the same program on Windows.
-18. Load your own import-free EXE whose entry returns 42. **Pass:** interpreter ends with RAX equal to 42.
+18. ✅ Load your own import-free EXE whose entry returns 42. **Pass:** interpreter ends with RAX equal to 42 (`tests/test_pe_execute`, host).
 
 ## Phase D: CPU interpreter
 
@@ -52,7 +52,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 21. ✅ Handle all prefixes, ModRM forms and high-byte registers. **Pass:** differential tests match.
 22. ✅ Complete integer, stack, call, multiply, divide and bit instructions. **Pass:** differential tests match, including divide faults.
 23. ✅ Add string instructions with `REP`. **Pass:** `MOVS`, `CMPS`, `SCAS`, `LODS`, `STOS` with byte/word/dword/qword sizes and `REP`/`REPE`/`REPNE` prefixes implemented in `runtime/src/x64_interpreter.cpp`; `tests/test_x64_interpreter` verifies rep movsb, rep stosb, lodsb, and repne scasb on host.
-24. Add atomics and fences with x86 memory ordering. **Pass:** multithreaded counter and litmus tests show no forbidden result on the phone.
+24. Add atomics and fences with x86 memory ordering. **Pass:** NOT YET — no test exists; needs multithreaded counter and litmus tests on phone.
 25. Add SSE through SSE4.2. **Pass:** results match, including NaN and rounding cases.
 26. Add x87 and MXCSR behavior. **Pass:** precision and rounding tests match.
 27. Add `CPUID`, `RDTSC`, `XGETBV`. **Pass:** only implemented features are advertised.
@@ -63,7 +63,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 29. ✅ Build the guest-to-host call bridge using the Windows x64 convention. **Pass:** bridge, HostProc calling convention, guest-to-host address mapping implemented in `runtime/src/x64_bridge.{h,cpp}` and `runtime/src/win32_host.cpp`. `tests/test_x64_bridge` passes host→guest (step 29) and guest→host callback (step 30) on host.
 30. ✅ Support host-to-guest callbacks. **Pass:** nested callbacks preserve all nonvolatile registers; `tests/test_x64_bridge` verifies guest callback 7+8=15 in RAX on host.
 31. ✅ Implement process exit, last-error, module and command-line APIs. **Pass:** your EXE calls `ExitProcess(42)` and the app reports 42 (`tests/test_win32_exit`, host); `GetLastError`/`SetLastError` stubs implemented in `runtime/src/win32_host.cpp`.
-32. Implement handles. **Pass:** invalid and closed handles return correct errors.
+32. ✅ Implement handles. **Pass:** invalid and closed handles return correct errors (`tests/test_win32_handles`, host).
 33. Implement heaps. **Pass:** a million random allocate and free operations show no corruption.
 34. Implement files and paths, mapping the game folder through Android storage. **Pass:** case-insensitive open, seek past 4 GB and directory listing work.
 35. Implement memory-mapped files. **Pass:** multiple views show correct data.

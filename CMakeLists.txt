@@ -102,6 +102,16 @@ target_link_libraries(test_win32_exit PRIVATE rottr_core)
 target_compile_options(test_win32_exit PRIVATE -Wall -Wextra -Werror)
 add_test(NAME win32_exit COMMAND test_win32_exit)
 
+add_executable(test_pe_execute tests/test_pe_execute.cpp)
+target_link_libraries(test_pe_execute PRIVATE rottr_core)
+target_compile_options(test_pe_execute PRIVATE -Wall -Wextra -Werror)
+add_test(NAME pe_execute COMMAND test_pe_execute)
+
+add_executable(test_win32_handles tests/test_win32_handles.cpp)
+target_link_libraries(test_win32_handles PRIVATE rottr_core)
+target_compile_options(test_win32_handles PRIVATE -Wall -Wextra -Werror)
+add_test(NAME win32_handles COMMAND test_win32_handles)
+
 add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
 target_link_libraries(test_x64_runtime PRIVATE rottr_core)
 target_compile_options(test_x64_runtime PRIVATE -Wall -Wextra -Werror)
