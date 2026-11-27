@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace rottr::gfx::d3d11 {
 
@@ -23,6 +24,8 @@ public:
     void destroyResource(uint64_t handle) override;
     bool uploadBuffer(uint64_t handle, uint32_t offset, const void*, uint32_t size) override;
     bool copyResource(uint64_t dst, uint64_t src) override;
+    // Transitions every mip/layer of a texture and updates its tracked Vulkan layout.
+    bool transitionTexture(uint64_t handle, VkImageLayout target);
     bool draw(uint32_t, uint32_t, uint32_t, uint32_t) override;
     bool drawIndexed(uint32_t, uint32_t, int32_t, uint32_t) override;
 
@@ -31,13 +34,15 @@ private:
         ResourceKind kind = ResourceKind::Buffer;
         VkBuffer buffer = VK_NULL_HANDLE;
         VkImage image = VK_NULL_HANDLE;
-        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        std::vector<VkImageLayout> subresourceLayouts;
         VkImageView view = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkDeviceSize size = 0;
         VkFormat format = VK_FORMAT_UNDEFINED;
         VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
         uint32_t width = 0, height = 0, mipLevels = 1, arraySize = 1;
+        uint32_t bindFlags = 0;
+        VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
     };
     uint32_t memoryType(uint32_t bits, VkMemoryPropertyFlags required) const;
     bool beginCommands(VkCommandBuffer& command);
