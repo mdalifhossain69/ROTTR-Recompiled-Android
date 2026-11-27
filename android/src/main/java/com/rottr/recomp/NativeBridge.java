@@ -2,8 +2,8 @@ package com.rottr.recomp;
 
 import android.graphics.SurfaceTexture;
 import android.util.Log;
-import android.view.Surface;
 import android.view.InputQueue;
+import android.view.Surface;
 
 /**
  * JNI bridge for ROTTR-Recomp native subsystems.

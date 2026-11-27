@@ -2,13 +2,14 @@ package com.rottr.recomp;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.InputQueue;
 import android.content.pm.PackageManager;
 import android.graphics.SurfaceTexture;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
+import android.view.InputQueue;
 import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.view.WindowManager;
 
@@ -19,7 +20,7 @@ import androidx.core.content.ContextCompat;
  * Main activity for ROTTR-Recomp.
  * Demonstrates integration of native subsystems with Android lifecycle.
  */
-public class MainActivity extends Activity implements SurfaceTextureListener {
+public class MainActivity extends Activity implements TextureView.SurfaceTextureListener {
     private static final String TAG = "ROTTR-Recomp-MainActivity";
 
     private static final int REQUEST_STORAGE_PERMISSION = 1001;
@@ -85,19 +86,6 @@ public class MainActivity extends Activity implements SurfaceTextureListener {
         LogUtils.close();
         // Shutdown native subsystems
         NativeBridge.shutdown();
-    }
-    
-    @Override
-    public void onInputQueueCreated(InputQueue queue) {
-        super.onInputQueueCreated(queue);
-        Log.i(TAG, "onInputQueueCreated: " + queue);
-        NativeBridge.setInputQueue(queue);
-    }
-    
-    @Override
-    public void onInputQueueDestroyed(InputQueue queue) {
-        super.onInputQueueDestroyed(queue);
-        Log.i(TAG, "onInputQueueDestroyed");
     }
     
     @Override
