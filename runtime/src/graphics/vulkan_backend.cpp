@@ -116,9 +116,90 @@ bool VulkanBackend::createTexture2D(const Texture2DDesc& desc, const Subresource
     view.image = a.image; view.viewType = desc.arraySize > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     view.format = a.format; view.subresourceRange = {a.aspect, 0, desc.mipLevels, 0, desc.arraySize};
     if (vkCreateImageView(device_, &view, nullptr, &a.view) != VK_SUCCESS) { destroyAllocation(a); return false; }
-    // Initial texture upload is deliberately rejected until a complete per-mip/per-layer
-    // staging layout is supplied; silently ignoring initial data would corrupt game textures.
-    if (initial) { destroyAllocation(a); return false; }
+    if (initial) {
+        if (desc.sampleCount != 1) { destroyAllocation(a); return false; }
+        const uint64_t subresourceCount64 = static_cast<uint64_t>(desc.mipLevels) * desc.arraySize;
+        if (subresourceCount64 > std::numeric_limits<uint32_t>::max()) { destroyAllocation(a); return false; }
+        const uint32_t subresourceCount = static_cast<uint32_t>(subresourceCount64);
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(physical_, &properties);
+        VkDeviceSize alignment = std::max<VkDeviceSize>(4, properties.limits.optimalBufferCopyOffsetAlignment);
+        alignment = std::max<VkDeviceSize>(alignment, format->bytesPerBlock);
+        struct Upload { VkBufferImageCopy region; const uint8_t* data; uint32_t rowPitch; uint32_t rows; VkDeviceSize offset; };
+        std::vector<Upload> uploads; uploads.reserve(subresourceCount);
+        VkDeviceSize stagingSize = 0;
+        for (uint32_t layer = 0; layer < desc.arraySize; ++layer) {
+            for (uint32_t mip = 0; mip < desc.mipLevels; ++mip) {
+                const uint32_t index = layer * desc.mipLevels + mip;
+                const SubresourceData& sub = initial[index];
+                const uint32_t width = std::max(1U, desc.width >> mip);
+                const uint32_t height = std::max(1U, desc.height >> mip);
+                const uint32_t blocksX = width / format->blockWidth + (width % format->blockWidth != 0U);
+                const uint32_t rows = height / format->blockHeight + (height % format->blockHeight != 0U);
+                const uint64_t tightRow64 = static_cast<uint64_t>(blocksX) * format->bytesPerBlock;
+                if (!sub.data || tightRow64 == 0 || tightRow64 > UINT32_MAX) { destroyAllocation(a); return false; }
+                const uint32_t tightRow = static_cast<uint32_t>(tightRow64);
+                const uint32_t sourceRow = sub.rowPitch ? sub.rowPitch : tightRow;
+                const uint64_t minSlice = static_cast<uint64_t>(sourceRow) * rows;
+                const uint64_t sourceSlice = sub.slicePitch ? sub.slicePitch : minSlice;
+                if (sourceRow < tightRow || minSlice > sourceSlice ||
+                    static_cast<uint64_t>(sourceRow) * (rows - 1U) + tightRow > sourceSlice) { destroyAllocation(a); return false; }
+                const VkDeviceSize mask = alignment - 1;
+                if ((alignment & mask) != 0 || stagingSize > std::numeric_limits<VkDeviceSize>::max() - mask) { destroyAllocation(a); return false; }
+                stagingSize = (stagingSize + mask) & ~mask;
+                const VkDeviceSize bytes = static_cast<VkDeviceSize>(tightRow) * rows;
+                if (bytes > std::numeric_limits<VkDeviceSize>::max() - stagingSize) { destroyAllocation(a); return false; }
+                Upload upload{}; upload.data = static_cast<const uint8_t*>(sub.data); upload.rowPitch = sourceRow; upload.rows = rows; upload.offset = stagingSize;
+                upload.region.bufferOffset = stagingSize;
+                upload.region.bufferRowLength = 0; upload.region.bufferImageHeight = 0;
+                upload.region.imageSubresource = {a.aspect, mip, layer, 1};
+                upload.region.imageOffset = {0, 0, 0}; upload.region.imageExtent = {width, height, 1};
+                uploads.push_back(upload); stagingSize += bytes;
+            }
+        }
+        Allocation staging{};
+        VkBufferCreateInfo stagingInfo{}; stagingInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        stagingInfo.size = stagingSize; stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT; stagingInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (vkCreateBuffer(device_, &stagingInfo, nullptr, &staging.buffer) != VK_SUCCESS) { destroyAllocation(a); return false; }
+        VkMemoryRequirements stagingReq{}; vkGetBufferMemoryRequirements(device_, staging.buffer, &stagingReq);
+        uint32_t stagingType = memoryType(stagingReq.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (stagingType == UINT32_MAX) { destroyAllocation(staging); destroyAllocation(a); return false; }
+        VkMemoryAllocateInfo stagingMem{}; stagingMem.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        stagingMem.allocationSize = stagingReq.size; stagingMem.memoryTypeIndex = stagingType;
+        if (vkAllocateMemory(device_, &stagingMem, nullptr, &staging.memory) != VK_SUCCESS ||
+            vkBindBufferMemory(device_, staging.buffer, staging.memory, 0) != VK_SUCCESS) { destroyAllocation(staging); destroyAllocation(a); return false; }
+        void* mapped = nullptr;
+        if (vkMapMemory(device_, staging.memory, 0, stagingSize, 0, &mapped) != VK_SUCCESS) { destroyAllocation(staging); destroyAllocation(a); return false; }
+        for (const Upload& upload : uploads) {
+            uint8_t* dst = static_cast<uint8_t*>(mapped) + upload.offset;
+            for (uint32_t row = 0; row < upload.rows; ++row)
+                std::memcpy(dst + static_cast<size_t>(row) * (upload.region.imageExtent.width / format->blockWidth + (upload.region.imageExtent.width % format->blockWidth != 0U)) * format->bytesPerBlock,
+                            upload.data + static_cast<size_t>(row) * upload.rowPitch,
+                            static_cast<size_t>(upload.region.imageExtent.width / format->blockWidth + (upload.region.imageExtent.width % format->blockWidth != 0U)) * format->bytesPerBlock);
+        }
+        vkUnmapMemory(device_, staging.memory);
+        VkCommandBuffer command = VK_NULL_HANDLE;
+        if (!beginCommands(command)) { destroyAllocation(staging); destroyAllocation(a); return false; }
+        VkImageMemoryBarrier toTransfer{}; toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toTransfer.srcAccessMask = 0; toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toTransfer.image = a.image; toTransfer.subresourceRange = {a.aspect, 0, desc.mipLevels, 0, desc.arraySize};
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransfer);
+        std::vector<VkBufferImageCopy> regions; regions.reserve(uploads.size());
+        for (const Upload& upload : uploads) regions.push_back(upload.region);
+        vkCmdCopyBufferToImage(command, staging.buffer, a.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()), regions.data());
+        VkImageMemoryBarrier toRead{}; toRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toRead.dstAccessMask = (desc.bindFlags & BindShaderResource) ? VK_ACCESS_SHADER_READ_BIT : VK_ACCESS_MEMORY_READ_BIT;
+        toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toRead.newLayout = (desc.bindFlags & BindShaderResource) ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+        toRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; toRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toRead.image = a.image; toRead.subresourceRange = {a.aspect, 0, desc.mipLevels, 0, desc.arraySize};
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toRead);
+        if (!endCommands(command)) { destroyAllocation(staging); destroyAllocation(a); return false; }
+        destroyAllocation(staging); a.layout = toRead.newLayout;
+    }
     handle = nextHandle_++; allocations_.emplace(handle, a); return true;
 }
 void VulkanBackend::destroyResource(uint64_t handle) {
