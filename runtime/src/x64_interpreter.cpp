@@ -195,6 +195,66 @@ bool writeOperand(const X64GuestMemory& memory, rottr_cpu& cpu,
     return writeGuest(memory, operand.address, &value, sizeof(value));
 }
 
+
+uint64_t widthMask(size_t size) {
+    return size == 8 ? ~uint64_t{0} : ((uint64_t{1} << (size * 8U)) - 1U);
+}
+
+bool writeOperandSized(const X64GuestMemory& memory, rottr_cpu& cpu,
+                       const RmOperand& operand, size_t size, uint64_t value) {
+    value &= widthMask(size);
+    if (!operand.isRegister)
+        return writeGuest(memory, operand.address, &value, size);
+    uint64_t& target = cpu.gpr[operand.registerIndex];
+    if (size == 4) target = static_cast<uint32_t>(value);
+    else if (size == 8) target = value;
+    else {
+        const uint64_t mask = widthMask(size);
+        target = (target & ~mask) | value;
+    }
+    return true;
+}
+
+void setSizedLogicFlags(rottr_cpu& cpu, uint64_t result, size_t size) {
+    const uint64_t mask = widthMask(size);
+    const uint64_t sign = uint64_t{1} << (size * 8U - 1U);
+    result &= mask;
+    cpu.rflags &= ~kArithmeticFlags;
+    if (result == 0) cpu.rflags |= kFlagZero;
+    if ((result & sign) != 0) cpu.rflags |= kFlagSign;
+    if (evenParity(static_cast<uint8_t>(result))) cpu.rflags |= kFlagParity;
+}
+
+uint64_t addSized(rottr_cpu& cpu, uint64_t left, uint64_t right, size_t size) {
+    const uint64_t mask = widthMask(size);
+    const uint64_t sign = uint64_t{1} << (size * 8U - 1U);
+    left &= mask; right &= mask;
+    const uint64_t result = (left + right) & mask;
+    cpu.rflags &= ~kArithmeticFlags;
+    if (right > mask - left) cpu.rflags |= kFlagCarry;
+    if (((left ^ right ^ result) & 0x10U) != 0) cpu.rflags |= kFlagAuxiliary;
+    if (((~(left ^ right) & (left ^ result)) & sign) != 0) cpu.rflags |= kFlagOverflow;
+    if (result == 0) cpu.rflags |= kFlagZero;
+    if ((result & sign) != 0) cpu.rflags |= kFlagSign;
+    if (evenParity(static_cast<uint8_t>(result))) cpu.rflags |= kFlagParity;
+    return result;
+}
+
+uint64_t subSized(rottr_cpu& cpu, uint64_t left, uint64_t right, size_t size) {
+    const uint64_t mask = widthMask(size);
+    const uint64_t sign = uint64_t{1} << (size * 8U - 1U);
+    left &= mask; right &= mask;
+    const uint64_t result = (left - right) & mask;
+    cpu.rflags &= ~kArithmeticFlags;
+    if (left < right) cpu.rflags |= kFlagCarry;
+    if (((left ^ right ^ result) & 0x10U) != 0) cpu.rflags |= kFlagAuxiliary;
+    if ((((left ^ right) & (left ^ result)) & sign) != 0) cpu.rflags |= kFlagOverflow;
+    if (result == 0) cpu.rflags |= kFlagZero;
+    if ((result & sign) != 0) cpu.rflags |= kFlagSign;
+    if (evenParity(static_cast<uint8_t>(result))) cpu.rflags |= kFlagParity;
+    return result;
+}
+
 bool evenParity(uint8_t value) {
     value ^= static_cast<uint8_t>(value >> 4);
     value &= 0x0f;
@@ -292,11 +352,17 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         const uint64_t instructionAddress = cpu.rip;
         Decoder decoder(memory, instructionAddress);
         uint8_t rex = 0;
+        bool operandSize16 = false;
         uint8_t opcode = 0;
         if (!decoder.byte(opcode))
             return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
                         "instruction fetch is outside executable guest memory");
-
+        if (opcode == 0x66) {
+            operandSize16 = true;
+            if (!decoder.byte(opcode))
+                return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
+                            "truncated instruction after operand-size prefix");
+        }
         if (opcode >= 0x40 && opcode <= 0x4f) {
             rex = opcode;
             if (!decoder.byte(opcode))
@@ -305,6 +371,7 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         }
 
         const bool rexW = (rex & 0x08U) != 0;
+        const size_t operandBytes = rexW ? 8U : (operandSize16 ? 2U : 4U);
         const unsigned rexR = (rex >> 2U) & 1U;
         const unsigned rexB = rex & 1U;
         const unsigned rexX = (rex >> 1U) & 1U;
@@ -556,15 +623,37 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                                                X64StopReason::ReadOnlyMemory),
                             executed, destination.address, "shift destination write failed");
             cpu.rip = decoder.next();
-        } else if (opcode == 0x89 || opcode == 0x8b ||
-                   opcode == 0x01 || opcode == 0x03 || opcode == 0x29 ||
-                   opcode == 0x2b || opcode == 0x09 || opcode == 0x0b ||
-                   opcode == 0x21 || opcode == 0x23 || opcode == 0x31 ||
-                   opcode == 0x33 || opcode == 0x39 || opcode == 0x3b ||
-                   opcode == 0x85) {
-            if (!rexW)
-                return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
-                            "only 64-bit MOV and arithmetic encodings are supported");
+        } else if (opcode == 0x88 || opcode == 0x8a ||
+                   opcode == 0x89 || opcode == 0x8b ||
+                   opcode == 0x00 || opcode == 0x02 ||
+                   opcode == 0x01 || opcode == 0x03 ||
+                   opcode == 0x28 || opcode == 0x2a ||
+                   opcode == 0x29 || opcode == 0x2b ||
+                   opcode == 0x08 || opcode == 0x0a ||
+                   opcode == 0x09 || opcode == 0x0b ||
+                   opcode == 0x20 || opcode == 0x22 ||
+                   opcode == 0x21 || opcode == 0x23 ||
+                   opcode == 0x30 || opcode == 0x32 ||
+                   opcode == 0x31 || opcode == 0x33 ||
+                   opcode == 0x38 || opcode == 0x3a ||
+                   opcode == 0x39 || opcode == 0x3b ||
+                   opcode == 0x84 || opcode == 0x85) {
+            const bool byteOperation = (opcode & 1U) == 0 &&
+                    opcode != 0x88 && opcode != 0x8a;
+            const size_t width = (opcode == 0x88 || opcode == 0x8a ||
+                                  opcode == 0x00 || opcode == 0x02 ||
+                                  opcode == 0x28 || opcode == 0x2a ||
+                                  opcode == 0x08 || opcode == 0x0a ||
+                                  opcode == 0x20 || opcode == 0x22 ||
+                                  opcode == 0x30 || opcode == 0x32 ||
+                                  opcode == 0x38 || opcode == 0x3a ||
+                                  opcode == 0x84) ? 1U : operandBytes;
+            (void) byteOperation;
+            if (width == 1 && rex == 0 && ((opcode == 0x88 || opcode == 0x8a) ||
+                (opcode >= 0x00 && opcode <= 0x3a)))
+                return stop(X64StopReason::UnsupportedInstruction, executed,
+                            instructionAddress,
+                            "legacy high-byte register encodings are not implemented");
             uint8_t modrm = 0;
             if (!decoder.byte(modrm))
                 return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
@@ -574,69 +663,80 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
                 return stop(X64StopReason::InvalidMemory, executed, instructionAddress,
                             "truncated ModRM/SIB displacement");
             const unsigned regField = ((modrm >> 3U) & 7U) | (rexR << 3U);
-            if (opcode == 0x89 || opcode == 0x8b) {
-                if (opcode == 0x89) {
-                    if (!writeOperand(memory, cpu, rmOperand, reg(cpu, regField)))
-                        return stop(rmOperand.isRegister ? X64StopReason::InvalidMemory :
-                                    (memory.writable ? X64StopReason::InvalidMemory :
-                                                       X64StopReason::ReadOnlyMemory),
-                                    executed, rmOperand.address, "MOV destination write failed");
+            const bool moveToRm = opcode == 0x88 || opcode == 0x89;
+            const bool moveFromRm = opcode == 0x8a || opcode == 0x8b;
+            if (moveToRm || moveFromRm) {
+                if (moveToRm) {
+                    if (!writeOperandSized(memory, cpu, rmOperand, width,
+                                           reg(cpu, regField)))
+                        return stop(X64StopReason::InvalidMemory, executed,
+                                    rmOperand.address, "MOV destination write failed");
                 } else {
                     uint64_t value = 0;
-                    if (!readOperand(memory, cpu, rmOperand, value))
-                        return stop(X64StopReason::InvalidMemory, executed, rmOperand.address,
-                                    "MOV source read failed");
-                    reg(cpu, regField) = value;
+                    if (!readOperandSized(memory, cpu, rmOperand, width, value))
+                        return stop(X64StopReason::InvalidMemory, executed,
+                                    rmOperand.address, "MOV source read failed");
+                    RmOperand destination;
+                    destination.isRegister = true;
+                    destination.registerIndex = regField;
+                    writeOperandSized(memory, cpu, destination, width, value);
                 }
             } else {
-                const bool destinationIsReg = opcode == 0x03 || opcode == 0x2b ||
-                                              opcode == 0x0b || opcode == 0x23 ||
-                                              opcode == 0x33 || opcode == 0x3b;
-                const uint64_t sourceValue = destinationIsReg ? 0 : reg(cpu, regField);
+                const bool destinationIsReg =
+                        opcode == 0x02 || opcode == 0x03 ||
+                        opcode == 0x0a || opcode == 0x0b ||
+                        opcode == 0x22 || opcode == 0x23 ||
+                        opcode == 0x2a || opcode == 0x2b ||
+                        opcode == 0x32 || opcode == 0x33 ||
+                        opcode == 0x3a || opcode == 0x3b;
+                const bool isCmp = opcode == 0x38 || opcode == 0x39 ||
+                                   opcode == 0x3a || opcode == 0x3b;
+                const bool isTest = opcode == 0x84 || opcode == 0x85;
                 uint64_t rmValue = 0;
-                if (!readOperand(memory, cpu, rmOperand, rmValue))
-                    return stop(X64StopReason::InvalidMemory, executed, rmOperand.address,
-                                "arithmetic source read failed");
-                const uint64_t left = destinationIsReg ? reg(cpu, regField) : rmValue;
-                const uint64_t right = destinationIsReg ? rmValue : sourceValue;
+                if (!readOperandSized(memory, cpu, rmOperand, width, rmValue))
+                    return stop(X64StopReason::InvalidMemory, executed,
+                                rmOperand.address, "arithmetic source read failed");
+                const uint64_t regValue = reg(cpu, regField) & widthMask(width);
+                const uint64_t left = destinationIsReg ? regValue : rmValue;
+                const uint64_t right = destinationIsReg ? rmValue : regValue;
                 uint64_t result = left;
-                bool writeResult = true;
-                switch (opcode) {
-                    case 0x01: case 0x03: result = add64(cpu, left, right); break;
-                    case 0x29: case 0x2b: result = sub64(cpu, left, right); break;
-                    case 0x09: case 0x0b:
-                        result = left | right;
-                        setLogicFlags(cpu, result);
-                        break;
-                    case 0x21: case 0x23:
-                        result = left & right;
-                        setLogicFlags(cpu, result);
-                        break;
-                    case 0x31: case 0x33:
-                        result = left ^ right;
-                        setLogicFlags(cpu, result);
-                        break;
-                    case 0x39: case 0x3b: case 0x85:
-                        (void) sub64(cpu, opcode == 0x85 ? (left & right) : left,
-                                     opcode == 0x85 ? 0 : right);
-                        if (opcode == 0x85) setLogicFlags(cpu, left & right);
-                        writeResult = false;
-                        break;
-                    default: break;
+                bool writeResult = !(isCmp || isTest);
+                if (isTest || opcode == 0x20 || opcode == 0x22 ||
+                    opcode == 0x21 || opcode == 0x23) {
+                    result = left & right;
+                    setSizedLogicFlags(cpu, result, width);
+                } else if (opcode == 0x08 || opcode == 0x0a ||
+                           opcode == 0x09 || opcode == 0x0b) {
+                    result = left | right;
+                    setSizedLogicFlags(cpu, result, width);
+                } else if (opcode == 0x30 || opcode == 0x32 ||
+                           opcode == 0x31 || opcode == 0x33) {
+                    result = left ^ right;
+                    setSizedLogicFlags(cpu, result, width);
+                } else if (opcode == 0x00 || opcode == 0x02 ||
+                           opcode == 0x01 || opcode == 0x03) {
+                    result = addSized(cpu, left, right, width);
+                } else if (opcode == 0x28 || opcode == 0x2a ||
+                           opcode == 0x29 || opcode == 0x2b ||
+                           isCmp) {
+                    result = subSized(cpu, left, right, width);
                 }
                 if (writeResult) {
-                    const bool stored = destinationIsReg ?
-                            (reg(cpu, regField) = result, true) :
-                            writeOperand(memory, cpu, rmOperand, result);
-                    if (!stored)
+                    if (destinationIsReg) {
+                        RmOperand destination;
+                        destination.isRegister = true;
+                        destination.registerIndex = regField;
+                        writeOperandSized(memory, cpu, destination, width, result);
+                    } else if (!writeOperandSized(memory, cpu, rmOperand, width, result)) {
                         return stop(memory.writable ? X64StopReason::InvalidMemory :
-                                                      X64StopReason::ReadOnlyMemory,
-                                    executed, rmOperand.address, "arithmetic destination write failed");
+                                                     X64StopReason::ReadOnlyMemory,
+                                    executed, rmOperand.address,
+                                    "arithmetic destination write failed");
+                    }
                 }
             }
             cpu.rip = decoder.next();
-        } else {
-            return stop(X64StopReason::UnsupportedInstruction, executed, instructionAddress,
+ortedInstruction, executed, instructionAddress,
                         "instruction encoding is not implemented");
         }
 
