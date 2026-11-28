@@ -10,6 +10,7 @@ add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/guest.c
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/guest_mem.c
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/pe_loader.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/se_unwind.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/remill_intrinsics.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_stubs.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_runtime.cpp
@@ -81,6 +82,12 @@ add_executable(test_pe_loader tests/test_pe_loader.cpp)
 target_link_libraries(test_pe_loader PRIVATE rottr_core)
 target_compile_options(test_pe_loader PRIVATE -Wall -Wextra -Werror)
 add_test(NAME pe_loader COMMAND test_pe_loader)
+
+add_executable(test_se_unwind tests/test_se_unwind.cpp)
+target_link_libraries(test_se_unwind PRIVATE rottr_core)
+target_include_directories(test_se_unwind PRIVATE tests)
+target_compile_options(test_se_unwind PRIVATE -Wall -Wextra -Werror)
+add_test(NAME se_unwind COMMAND test_se_unwind)
 
 add_executable(test_runtime tests/test_runtime.cpp)
 target_link_libraries(test_runtime PRIVATE rottr_core)
