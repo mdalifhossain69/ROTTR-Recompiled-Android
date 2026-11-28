@@ -928,6 +928,8 @@ namespace rottr {
 bool isExitRequested() { return g_exitRequested.load(); }
 uint32_t getExitCode() { return g_exitCode; }
 
+void registerRegistryHostModule();
+
 void registerHostModules() {
     HostModule k32;
     k32.name = "kernel32.dll";
@@ -985,6 +987,7 @@ void registerHostModules() {
         std::lock_guard<std::mutex> lock(hostModulesMutex());
         hostModules().push_back(std::move(k32));
     }
+    registerRegistryHostModule();
     // Allocate guest call addresses for each host export so the IAT can
     // point to them.
     for (HostModule& mod : hostModules()) {
