@@ -40,4 +40,14 @@ private:
     uint64_t cursor_;
 };
 
+struct RmOperand {
+    bool isRegister = false;
+    unsigned registerIndex = 0;
+    uint64_t address = 0;
+};
+
+bool decodeRmOperand(Decoder& decoder, const rottr_cpu& cpu, uint8_t modrm,
+                     unsigned rexB, unsigned rexX, RmOperand& operand,
+                     uint64_t segBase = 0);
+
 } // namespace rottr
