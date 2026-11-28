@@ -34,6 +34,11 @@ uint64_t execute(bool cached, rottr::X64GuestMemory& memory,
 }  // namespace
 
 int main() {
+    if (!rottr::arm64::hasArm64TranslationBackend()) {
+        std::puts("SKIP: host is not AArch64; native benchmark did not run");
+        return 77;
+    }
+
     Bytes bytes;
     appendMovAdd(bytes);
     bytes.resize(0x100, 0);
@@ -73,10 +78,6 @@ int main() {
                 static_cast<long long>(uncachedNs / 1000000),
                 static_cast<long long>(cachedNs / 1000000), cache.stats().hits);
 
-    if (!rottr::arm64::hasArm64TranslationBackend()) {
-        std::puts("SKIP: host is not AArch64; native benchmark did not run");
-        return 77;
-    }
     std::printf("OK (cached translation matched results with %zu block hits)\n",
                 cache.stats().hits);
     return 0;

@@ -19,6 +19,11 @@ void movRax(Bytes& out, uint64_t value) {
 }  // namespace
 
 int main() {
+    if (!rottr::arm64::hasArm64TranslationBackend()) {
+        std::puts("SKIP: host is not AArch64; native translation was not executed");
+        return 77;
+    }
+
     Bytes bytes;
     movRax(bytes, 1);
     movRax(bytes, 2);
@@ -72,10 +77,6 @@ int main() {
         return 1;
     }
 
-    if (!rottr::arm64::hasArm64TranslationBackend()) {
-        std::puts("SKIP: host is not AArch64; native translation was not executed");
-        return 77;
-    }
     if (cache.stats().invalidations == 0) {
         std::puts("FAIL: cache did not detect modified code");
         return 1;

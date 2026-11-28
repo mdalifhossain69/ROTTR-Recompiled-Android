@@ -128,6 +128,7 @@ X64RunResult runX64Translated(rottr_cpu& cpu, const X64GuestMemory& memory,
         }
     }
 #else
+    (void)cache;
     result = runX64Interpreter(cpu, memory, instructionBudget);
     result.detail = "host is not AArch64; translated blocks were not executed";
 #endif

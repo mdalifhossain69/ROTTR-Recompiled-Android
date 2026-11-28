@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <string>
 
 extern "C" {
@@ -47,6 +48,14 @@ static const size_t kFindDataSize = 310;
 
 int main() {
     const char* testFile = "/tmp/rottr_step34_test/HelloWorld.txt";
+    std::error_code directoryError;
+    std::filesystem::create_directories("/tmp/rottr_step34_test", directoryError);
+    if (directoryError) {
+        std::fprintf(stderr, "cannot create test directory: %s\n",
+                     directoryError.message().c_str());
+        return 1;
+    }
+
     {
         FILE* f = std::fopen(testFile, "wb");
         if (!f) { std::fprintf(stderr, "cannot create test file\n"); return 1; }

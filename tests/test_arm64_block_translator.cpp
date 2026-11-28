@@ -3,6 +3,7 @@
 #include "rottr/arm64_block_translator.h"
 #include "rottr/arm64_code_buffer.h"
 #include "rottr/arm64_emitter.h"
+#include "rottr/arm64_translator_runtime.h"
 #include "rottr/x64_runtime.h"
 
 #include <cstdint>
@@ -47,6 +48,11 @@ void resetCpu(rottr_cpu& cpu, uint64_t rip, uint64_t rsp) {
 }  // namespace
 
 int main() {
+    if (!hasArm64TranslationBackend()) {
+        std::puts("SKIP: host is not AArch64; translated code was not executed");
+        return 77;
+    }
+
     const uint64_t kBase = 0x1000;
     const size_t kMemSize = 65536;
     std::vector<uint8_t> guestMem(kMemSize);
