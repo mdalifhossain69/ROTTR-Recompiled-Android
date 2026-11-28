@@ -45,6 +45,33 @@ int main() {
                 "decoder must reject an immediate that exceeds the 15-byte instruction limit"))
         return 1;
 
+    std::array<uint8_t, 1> danglingPrefixBytes{0x66};
+    rottr::X64GuestMemory danglingPrefixMemory{
+            0x2800, danglingPrefixBytes.data(), danglingPrefixBytes.size(),
+            true, true};
+    rottr_cpu danglingPrefixCpu{};
+    rottr_cpu_reset(&danglingPrefixCpu, danglingPrefixMemory.base,
+                    danglingPrefixMemory.base);
+    auto danglingPrefixResult = rottr::runX64Interpreter(
+            danglingPrefixCpu, danglingPrefixMemory, 1);
+    if (!expect(danglingPrefixResult.reason ==
+                        rottr::X64StopReason::InvalidMemory &&
+                    danglingPrefixResult.faultAddress ==
+                            danglingPrefixMemory.base + 1,
+                "truncated legacy prefix must report an instruction-fetch fault"))
+        return 1;
+    danglingPrefixBytes[0] = 0x48;
+    rottr_cpu_reset(&danglingPrefixCpu, danglingPrefixMemory.base,
+                    danglingPrefixMemory.base);
+    danglingPrefixResult = rottr::runX64Interpreter(
+            danglingPrefixCpu, danglingPrefixMemory, 1);
+    if (!expect(danglingPrefixResult.reason ==
+                        rottr::X64StopReason::InvalidMemory &&
+                    danglingPrefixResult.faultAddress ==
+                            danglingPrefixMemory.base + 1,
+                "truncated REX prefix must report an instruction-fetch fault"))
+        return 1;
+
     std::array<uint8_t, 258> guardedMemory{};
     std::array<uint8_t, 256> randomProgram{};
     constexpr uint8_t kGuard = 0xa5;

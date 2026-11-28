@@ -350,6 +350,47 @@ struct RexPrefix {
     bool b = false;
 };
 
+struct DecodedInstruction {
+    RexPrefix rex{};
+    uint8_t opcode = 0;
+    size_t opSizeOverride = 8;
+    unsigned repPrefix = 0;
+    bool segmentOverride = false;
+    bool lockPrefix = false;
+};
+
+bool decodePrefixesAndOpcode(Decoder& decoder,
+                             DecodedInstruction& instruction) {
+    uint8_t first = 0;
+    if (!decoder.byte(first)) return false;
+
+    while (first == 0x64 || first == 0x65 || first == 0x66 ||
+           first == 0xf0 || first == 0xf2 || first == 0xf3) {
+        if (first == 0x64 || first == 0x65)
+            instruction.segmentOverride = true;
+        else if (first == 0x66)
+            instruction.opSizeOverride = 2;
+        else if (first == 0xf0)
+            instruction.lockPrefix = true;
+        else if (first == 0xf2)
+            instruction.repPrefix = 2;
+        else if (first == 0xf3)
+            instruction.repPrefix = 1;
+        if (!decoder.byte(first)) return false;
+    }
+
+    if ((first & 0xf0) == 0x40) {
+        instruction.rex.w = (first & 0x08) != 0;
+        instruction.rex.r = (first & 0x04) != 0;
+        instruction.rex.x = (first & 0x02) != 0;
+        instruction.rex.b = (first & 0x01) != 0;
+        if (!decoder.byte(first)) return false;
+    }
+
+    instruction.opcode = first;
+    return true;
+}
+
 bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
                         Decoder& decoder, const RexPrefix& rex,
                         uint8_t opcode, size_t opSizeOverride,
@@ -1208,54 +1249,24 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         Decoder decoder(memory, cpu.rip);
         uint64_t instStart = cpu.rip;
 
-        uint8_t first = 0;
-        if (!decoder.byte(first)) {
+        DecodedInstruction instruction;
+        if (!decodePrefixesAndOpcode(decoder, instruction)) {
             result.reason = X64StopReason::InvalidMemory;
             result.faultAddress = decoder.next();
             break;
         }
 
-        RexPrefix rex{};
-        size_t opSizeOverride = 8; // default 64-bit
-        unsigned repPrefix = 0; // 0 = none, 1 = F3 (REP/REPE/REPZ), 2 = F2 (REPNE/REPNZ)
-        unsigned gsOverride = 0; // 0 = none, 1 = GS (0x65)
-        bool lockPrefix = false;
-        // Legacy prefixes: 0x64 = FS, 0x65 = GS, 0x66 = operand-size override,
-        // 0xf0 = LOCK, 0xf2/0xf3 = REP.
-        while (first == 0x64 || first == 0x65 || first == 0x66 ||
-               first == 0xf0 || first == 0xf2 || first == 0xf3) {
-            if (first == 0x64 || first == 0x65) gsOverride = 1;
-            else if (first == 0x66) opSizeOverride = 2;
-            else if (first == 0xf0) lockPrefix = true;
-            else if (first == 0xf2) repPrefix = 2;
-            else if (first == 0xf3) repPrefix = 1;
-            if (!decoder.byte(first)) {
-                result.reason = X64StopReason::InvalidMemory;
-                result.faultAddress = decoder.next();
-                break;
-            }
-        }
-        if ((first & 0xf0) == 0x40) {
-            rex.w = (first & 0x08) != 0;
-            rex.r = (first & 0x04) != 0;
-            rex.x = (first & 0x02) != 0;
-            rex.b = (first & 0x01) != 0;
-            if (!decoder.byte(first)) {
-                result.reason = X64StopReason::InvalidMemory;
-                result.faultAddress = decoder.next();
-                break;
-            }
-        }
-
-        if (first == 0xf4) { cpu.rip = decoder.next(); result.reason = X64StopReason::Halted; executed++; break; }
-        if (first == 0x90) { cpu.rip = decoder.next(); executed++; continue; }
-        if (first == 0xcc) { result.reason = X64StopReason::InvalidCpuState; result.faultAddress = instStart; break; }
+        if (instruction.opcode == 0xf4) { cpu.rip = decoder.next(); result.reason = X64StopReason::Halted; executed++; break; }
+        if (instruction.opcode == 0x90) { cpu.rip = decoder.next(); executed++; continue; }
+        if (instruction.opcode == 0xcc) { result.reason = X64StopReason::InvalidCpuState; result.faultAddress = instStart; break; }
 
         bool ripUpdated = false;
         X64StopReason stopReason = X64StopReason::UnsupportedInstruction;
-        uint64_t segBase = gsOverride ? cpu.gsBase : 0;
-        bool ok = executeInstruction(cpu, memory, decoder, rex, first, opSizeOverride,
-                                     repPrefix, segBase, lockPrefix, ripUpdated, stopReason);
+        uint64_t segBase = instruction.segmentOverride ? cpu.gsBase : 0;
+        bool ok = executeInstruction(
+                cpu, memory, decoder, instruction.rex, instruction.opcode,
+                instruction.opSizeOverride, instruction.repPrefix, segBase,
+                instruction.lockPrefix, ripUpdated, stopReason);
         if (!ok) {
             result.reason = stopReason;
             result.faultAddress = instStart;
