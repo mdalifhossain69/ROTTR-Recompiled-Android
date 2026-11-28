@@ -102,6 +102,11 @@ target_link_libraries(test_x64_atomics PRIVATE rottr_core)
 target_compile_options(test_x64_atomics PRIVATE -Wall -Wextra -Werror -pthread)
 add_test(NAME x64_atomics COMMAND test_x64_atomics)
 
+add_executable(test_x64_cpuid tests/test_x64_cpuid.cpp)
+target_link_libraries(test_x64_cpuid PRIVATE rottr_core)
+target_compile_options(test_x64_cpuid PRIVATE -Wall -Wextra -Werror)
+add_test(NAME x64_cpuid COMMAND test_x64_cpuid)
+
 add_executable(test_win32_exit tests/test_win32_exit.cpp)
 target_link_libraries(test_win32_exit PRIVATE rottr_core)
 target_compile_options(test_win32_exit PRIVATE -Wall -Wextra -Werror)

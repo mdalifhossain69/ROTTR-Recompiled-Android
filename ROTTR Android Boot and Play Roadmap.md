@@ -55,7 +55,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 24. ✅ Add atomics and fences with x86 memory ordering. **Pass:** multithreaded counter and litmus tests. `tests/test_x64_atomics` verifies XCHG/XADD/CMPXCHG semantics, a 4-thread `LOCK ADD` counter (800000 increments, none lost) and an MFENCE store-buffer litmus on host; guest memory uses relaxed atomics so concurrent interpreter threads are race-free. Phone run pending.
 25. Add SSE through SSE4.2. **Pass:** results match, including NaN and rounding cases.
 26. Add x87 and MXCSR behavior. **Pass:** precision and rounding tests match.
-27. Add `CPUID`, `RDTSC`, `XGETBV`. **Pass:** only implemented features are advertised.
+27. ✅ Add `CPUID`, `RDTSC`, `XGETBV`. **Pass:** only implemented features are advertised. `tests/test_x64_cpuid` verifies leaf 0 (vendor/max leaf), leaf 1 advertises zero ECX/EDX feature bits because no SSE/x87/AVX exists yet, unknown and extended leaves, monotonic RDTSC, and XGETBV returning XCR0=0. Phone run pending.
 28. Inventory instructions the game reaches, adding AVX or others if needed. **Pass:** each unsupported opcode is logged with address and bytes, then implemented and tested.
 
 ## Phase E: Windows calls and runtime

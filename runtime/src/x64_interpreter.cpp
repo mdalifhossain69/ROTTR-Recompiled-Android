@@ -4,6 +4,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -284,6 +285,21 @@ uint8_t computeParity(uint64_t value, size_t /*size*/) {
     if (!parityInitialized) initParity();
     uint8_t v = static_cast<uint8_t>(value & 0xffULL);
     return parityTable[v];
+}
+
+// Monotonic timestamp counter for RDTSC. Wall-clock nanoseconds are used when
+// available, but the value is forced to strictly increase so back-to-back
+// reads never go backward.
+uint64_t nextTsc() {
+    static std::atomic<uint64_t> counter{0};
+    const uint64_t now = static_cast<uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    uint64_t prev = counter.load(std::memory_order_relaxed);
+    uint64_t next = 0;
+    do {
+        next = (now > prev) ? now : prev + 1;
+    } while (!counter.compare_exchange_weak(prev, next, std::memory_order_relaxed));
+    return next;
 }
 
 void updateArithmeticFlags(rottr_cpu& cpu, uint64_t result, uint64_t operand1,
@@ -953,6 +969,50 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
             }
             ripUpdated = true;
             return true;
+        }
+        // ---- CPUID: 0F A2 ----
+        if (opcode2 == 0xa2) {
+            const uint32_t leaf = static_cast<uint32_t>(cpu.gpr[0]);
+            uint32_t a = 0, b = 0, c = 0, d = 0;
+            if (leaf == 0) {
+                a = 1;  // highest basic leaf
+                std::memcpy(&b, "ROTT", 4);
+                std::memcpy(&d, "R-RE", 4);
+                std::memcpy(&c, "COMP", 4);
+            } else if (leaf == 1) {
+                a = 0x00000663;                       // family/model/stepping
+                b = (1U << 16) | (8U << 8);           // 1 logical CPU, 64-byte line
+                c = 0;                                // no unimplemented ECX features
+                d = 0;                                // no unimplemented EDX features
+            } else if (leaf == 0x80000000U) {
+                a = 0x80000000U;                      // no extended leaves
+            }
+            cpu.gpr[0] = a;
+            cpu.gpr[3] = b;
+            cpu.gpr[1] = c;
+            cpu.gpr[2] = d;
+            return true;
+        }
+        // ---- RDTSC: 0F 31 ----
+        if (opcode2 == 0x31) {
+            const uint64_t tsc = nextTsc();
+            cpu.gpr[0] = static_cast<uint32_t>(tsc);        // EAX, zero-extended
+            cpu.gpr[2] = static_cast<uint32_t>(tsc >> 32);  // EDX, zero-extended
+            return true;
+        }
+        // ---- XGETBV / XSETBV: 0F 01 /2, /3 ----
+        if (opcode2 == 0x01) {
+            uint8_t modrm = 0;
+            if (!decoder.byte(modrm)) return false;
+            if (modrm == 0xd0) { // XGETBV
+                const uint32_t index = static_cast<uint32_t>(cpu.gpr[1]);
+                if (index != 0) return false;  // invalid XCR -> #GP
+                // x87/SSE/AVX state is not implemented, so XCR0 advertises 0.
+                cpu.gpr[0] = 0;
+                cpu.gpr[2] = 0;
+                return true;
+            }
+            return false;
         }
         // ---- Fences: 0F AE F0 (MFENCE), 0F AE E8 (LFENCE), 0F AE F8 (SFENCE) ----
         if (opcode2 == 0xae) {
