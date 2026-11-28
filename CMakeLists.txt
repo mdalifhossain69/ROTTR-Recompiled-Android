@@ -25,6 +25,9 @@ add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/import_report.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/arm64_emitter.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/arm64_code_buffer.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/arm64_block_translator.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/arm64_translator_runtime.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/arm64_block_cache.cpp
 )
 target_include_directories(rottr_core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
 target_compile_options(rottr_core PRIVATE -Wall -Wextra -Werror)
@@ -122,6 +125,15 @@ target_link_libraries(test_x64_cpuid PRIVATE rottr_core)
 target_compile_options(test_x64_cpuid PRIVATE -Wall -Wextra -Werror)
 add_test(NAME x64_cpuid COMMAND test_x64_cpuid)
 
+add_test(NAME x64_interpreter_translated COMMAND test_x64_interpreter)
+set_tests_properties(x64_interpreter_translated PROPERTIES ENVIRONMENT "ROTTR_TRANSLATED_TESTS=1")
+add_test(NAME x64_bridge_translated COMMAND test_x64_bridge)
+set_tests_properties(x64_bridge_translated PROPERTIES ENVIRONMENT "ROTTR_TRANSLATED_TESTS=1")
+add_test(NAME x64_atomics_translated COMMAND test_x64_atomics)
+set_tests_properties(x64_atomics_translated PROPERTIES ENVIRONMENT "ROTTR_TRANSLATED_TESTS=1")
+add_test(NAME x64_cpuid_translated COMMAND test_x64_cpuid)
+set_tests_properties(x64_cpuid_translated PROPERTIES ENVIRONMENT "ROTTR_TRANSLATED_TESTS=1")
+
 add_executable(test_win32_exit tests/test_win32_exit.cpp)
 target_link_libraries(test_win32_exit PRIVATE rottr_core)
 target_compile_options(test_win32_exit PRIVATE -Wall -Wextra -Werror)
@@ -199,9 +211,39 @@ target_compile_options(test_arm64_code_buffer PRIVATE -Wall -Wextra -Werror)
 add_test(NAME arm64_code_buffer COMMAND test_arm64_code_buffer)
 set_tests_properties(arm64_code_buffer PROPERTIES SKIP_RETURN_CODE 77)
 
+add_executable(test_arm64_block_translator tests/test_arm64_block_translator.cpp)
+target_link_libraries(test_arm64_block_translator PRIVATE rottr_core)
+target_compile_options(test_arm64_block_translator PRIVATE -Wall -Wextra -Werror)
+add_test(NAME arm64_block_translator COMMAND test_arm64_block_translator)
+set_tests_properties(arm64_block_translator PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(test_arm64_translation tests/test_arm64_translation.cpp)
+target_link_libraries(test_arm64_translation PRIVATE rottr_core)
+target_compile_options(test_arm64_translation PRIVATE -Wall -Wextra -Werror)
+add_test(NAME arm64_translation COMMAND test_arm64_translation)
+set_tests_properties(arm64_translation PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(test_arm64_block_cache tests/test_arm64_block_cache.cpp)
+target_link_libraries(test_arm64_block_cache PRIVATE rottr_core)
+target_compile_options(test_arm64_block_cache PRIVATE -Wall -Wextra -Werror)
+add_test(NAME arm64_block_cache COMMAND test_arm64_block_cache)
+set_tests_properties(arm64_block_cache PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(test_arm64_faults tests/test_arm64_faults.cpp)
+target_link_libraries(test_arm64_faults PRIVATE rottr_core)
+target_compile_options(test_arm64_faults PRIVATE -Wall -Wextra -Werror)
+add_test(NAME arm64_faults COMMAND test_arm64_faults)
+set_tests_properties(arm64_faults PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(rottr_import_report tools/import_report.cpp)
 target_link_libraries(rottr_import_report PRIVATE rottr_core)
 target_compile_options(rottr_import_report PRIVATE -Wall -Wextra -Werror)
+
+add_executable(arm64_bench tools/arm64_bench.cpp)
+target_link_libraries(arm64_bench PRIVATE rottr_core)
+target_compile_options(arm64_bench PRIVATE -Wall -Wextra -Werror)
+add_test(NAME arm64_bench COMMAND arm64_bench)
+set_tests_properties(arm64_bench PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(test_win32_sync tests/test_win32_sync.cpp)
 target_link_libraries(test_win32_sync PRIVATE rottr_core)
