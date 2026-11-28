@@ -17,6 +17,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install LLVM assembler (roadmap step 46)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y -qq llvm
+
       - name: Run host-side graphics translation tests
         run: |
           cmake -S . -B build/host-tests -DCMAKE_BUILD_TYPE=Debug

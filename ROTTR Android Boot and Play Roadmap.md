@@ -82,7 +82,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 
 Start after step 28. It can run alongside later work.
 
-46. Write an ARM64 instruction emitter. **Pass:** output matches the LLVM assembler.
+46. ✅ Write an ARM64 instruction emitter. **Pass:** output matches the LLVM assembler. `runtime/src/arm64_emitter.cpp` emits AArch64 words for moves/immediates, arithmetic, logical, shifts, multiply, loads/stores, branches (including condition/CBZ/TBZ), ADR/ADRP, RET/BR/BLR, SVC and BRK. `tests/test_arm64_emitter` assembles every covered instruction with `llvm-mc -triple=aarch64 -show-encoding` and compares the exact bytes; the workflow installs LLVM so the check runs in CI. A missing `llvm-mc` skips the test rather than passing it.
 47. Manage executable memory and instruction-cache flushing. **Pass:** generated code runs repeatedly on the phone.
 48. Translate basic blocks with interpreter fallback. **Pass:** state matches the interpreter after every block.
 49. Cover flags, branches, SIMD, atomics and memory ordering. **Pass:** all CPU tests pass in translated mode.
