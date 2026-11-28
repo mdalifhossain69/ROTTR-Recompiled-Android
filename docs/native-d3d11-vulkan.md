@@ -8,6 +8,13 @@ The target is a native Android ARM64 application. Android owns the lifecycle, su
 
 This workstream does not execute Windows x86-64 instructions, load PE files, provide Windows APIs or load game DLLs. CPU execution and Windows runtime compatibility are separate prerequisites.
 
+## Backend direction
+
+DXVK Native is the selected D3D11-to-Vulkan implementation direction; Android
+ARM64 build, WSI, and guest COM ABI integration are not yet proven. See
+[ADR 0003](adr/0003-d3d11-vulkan-via-dxvk-native.md). Do not treat the current
+project-owned device/backend primitives as a complete replacement for DXVK.
+
 ## Code currently present
 
 ### DXGI formats

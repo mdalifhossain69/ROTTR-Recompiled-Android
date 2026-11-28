@@ -17,14 +17,15 @@ A work-in-progress native Android ARM64 project targeting Rise of the Tomb Raide
 | Windows API / NT compatibility | A few stubs and abstractions only | Not sufficient for ROTTR |
 | DLL/dependency loading | No complete guest module loader | Not implemented |
 | Vulkan Android presentation | Native surface/swapchain diagnostic renderer | Foundation present; diagnostic output, not game rendering |
-| D3D11-style device/context | `runtime/src/graphics/d3d11_device.*` | Partial abstraction; not full COM D3D11 |
+| D3D11-to-Vulkan | `runtime/src/graphics/d3d11_device.*`, `runtime/src/graphics/vulkan_backend.*` | Project primitives are partial; DXVK Native selected, not integrated |
 | Vulkan resources and commands | `runtime/src/graphics/vulkan_backend.*` | Partial backend primitives; not connected to game calls |
-| DXBC handling | Parser and optional vkd3d-shader adapter | Inspection/parser present; compiler not provisioned for Android ARM64 |
+| DXBC handling | Project parser; DXVK Native's `dxbc-spirv` candidate | Parser present; DXVK compiler path not integrated |
 | Actual ROTTR draw stream/frame | No guest game runtime or connected game command stream | Not achieved |
 | Audio, controller/touch overlay, HUD | Source foundations exist for some input/audio components | Game integration not verified; configurable in-game HUD not complete |
 | Gameplay/performance/release | No gameplay baseline | Not started / not verified |
 
 The detailed, authoritative status is [docs/ROADMAP.md](docs/ROADMAP.md). Graphics boundaries are in [docs/native-d3d11-vulkan.md](docs/native-d3d11-vulkan.md).
+The selected graphics backend direction and integration gates are in [ADR 0003](docs/adr/0003-d3d11-vulkan-via-dxvk-native.md).
 
 ## Selected CPU direction
 

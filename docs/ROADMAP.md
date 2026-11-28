@@ -27,7 +27,7 @@ This file is the project status source of truth. Status describes code present i
 | Windows API / NT layer | Some stubs and basic structures | Insufficient; not game compatible |
 | Guest DLL loading | No complete guest module/dependency loader | Not started |
 | DXGI/Vulkan formats | Mapping and size helpers | Partial subset implemented |
-| D3D11 device/context | Resource/context abstractions and tests | Partial; not full COM ABI |
+| D3D11 device/context | Resource/context abstractions and tests | Partial; DXVK Native selected but not integrated (ADR 0003) |
 | Vulkan resource backend | Buffers, images, uploads, copies, layout tracking | Partial primitives |
 | DXBC | Container/token parser and optional compiler adapter | Parser present; ARM64 compiler not provisioned |
 | Vulkan shader/pipeline/draw primitives | Backend functions exist | Implemented as primitives; not game integrated |
@@ -135,6 +135,9 @@ Missing:
 - Game D3D11 call stream feeding these components.
 
 The code is a partial compatibility foundation, not a complete D3D11 implementation.
+DXVK Native is the selected D3D11-to-Vulkan implementation direction. Its Android
+ARM64 WSI path and guest Windows x64 COM-call bridge remain unverified; see
+[ADR 0003](adr/0003-d3d11-vulkan-via-dxvk-native.md).
 
 ## M5 — Shader compilation and real game rendering
 
