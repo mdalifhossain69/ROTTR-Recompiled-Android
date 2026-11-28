@@ -40,7 +40,7 @@ public:
     Decoder(const X64GuestMemory& memory, uint64_t ip) : memory_(memory), start_(ip), cursor_(ip) {}
     
     bool byte(uint8_t& value) {
-        if (cursor_ - start_ >= kMaximumInstructionLength || 
+        if (length() >= kMaximumInstructionLength ||
             !fetch(memory_, cursor_, &value, sizeof(value))) return false;
         ++cursor_;
         return true;
@@ -48,25 +48,30 @@ public:
     
     template <typename T>
     bool immediate(T& value) {
+        if (length() > kMaximumInstructionLength ||
+            sizeof(T) > kMaximumInstructionLength - length())
+            return false;
         if (!fetch(memory_, cursor_, &value, sizeof(T))) return false;
         cursor_ += sizeof(T);
         return true;
     }    
     uint64_t next() const { return cursor_; }
-    uint64_t length() const { return cursor_ - start_; }
-    
-private:
-    bool fetch(const X64GuestMemory& memory, uint64_t address, void* out, size_t size) {
-        if (memory.data == nullptr || address < memory.base) return false;
-        const uint64_t offset = address - memory.base;
-        if (offset + size > memory.size) return false;
-        std::memcpy(out, memory.data + offset, size);
-        return true;
+    size_t length() const {
+        return cursor_ >= start_ ? static_cast<size_t>(cursor_ - start_)
+                                 : kMaximumInstructionLength + 1U;
     }
     
-    // Copy implementation (would use std::memcpy in real code)
-    void copy(void* dest, const void* src, size_t size) {
-        std::memcpy(dest, src, size);
+private:
+    static bool fetch(const X64GuestMemory& memory, uint64_t address,
+                      void* out, size_t size) {
+        if (!memory.executable || memory.data == nullptr || address < memory.base)
+            return false;
+        const uint64_t offset = address - memory.base;
+        if (offset > memory.size ||
+            size > memory.size - static_cast<size_t>(offset))
+            return false;
+        std::memcpy(out, memory.data + static_cast<size_t>(offset), size);
+        return true;
     }
     
     const X64GuestMemory& memory_;

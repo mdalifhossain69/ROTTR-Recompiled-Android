@@ -1,6 +1,8 @@
 #include "rottr/x64_runtime.h"
+#include "rottr/x64_decoder.h"
 #include "x64_test_runner.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +16,60 @@ bool expect(bool condition, const char* message) {
 }
 
 int main() {
+    std::array<uint8_t, 32> decoderBytes{};
+    rottr::X64GuestMemory decoderMemory{
+            0x2000, decoderBytes.data(), decoderBytes.size(), true, true};
+    rottr::Decoder decoder(decoderMemory, UINT64_MAX);
+    uint8_t decodedByte = 0;
+    if (!expect(!decoder.byte(decodedByte),
+                "decoder must reject an address whose offset overflows guest bounds"))
+        return 1;
+
+    rottr::X64GuestMemory nonExecutableMemory{
+            0x2000, decoderBytes.data(), decoderBytes.size(), true, false};
+    rottr::Decoder nonExecutableDecoder(nonExecutableMemory, 0x2000);
+    if (!expect(!nonExecutableDecoder.byte(decodedByte),
+                "decoder must reject a non-executable guest region"))
+        return 1;
+
+    std::fill(decoderBytes.begin(), decoderBytes.end(), 0x65);
+    rottr::Decoder maximumLengthDecoder(decoderMemory, 0x2000);
+    for (size_t i = 0; i < rottr::kMaximumInstructionLength - 1U; ++i) {
+        if (!expect(maximumLengthDecoder.byte(decodedByte),
+                    "decoder must consume bytes up to the maximum instruction length"))
+            return 1;
+    }
+    uint16_t oversizedImmediate = 0;
+    if (!expect(!maximumLengthDecoder.immediate(oversizedImmediate),
+                "decoder must reject an immediate that exceeds the 15-byte instruction limit"))
+        return 1;
+
+    std::array<uint8_t, 258> guardedMemory{};
+    std::array<uint8_t, 256> randomProgram{};
+    constexpr uint8_t kGuard = 0xa5;
+    guardedMemory.front() = kGuard;
+    guardedMemory.back() = kGuard;
+    rottr::X64GuestMemory randomGuest{
+            0x3000, guardedMemory.data() + 1U, randomProgram.size(), true, true};
+    uint32_t randomState = 0x7f4a7c15U;
+    rottr_cpu randomCpu{};
+    for (size_t trial = 0; trial < 256; ++trial) {
+        for (uint8_t& byte : randomProgram) {
+            randomState ^= randomState << 13U;
+            randomState ^= randomState >> 17U;
+            randomState ^= randomState << 5U;
+            byte = static_cast<uint8_t>(randomState);
+        }
+        std::memcpy(guardedMemory.data() + 1U, randomProgram.data(),
+                    randomProgram.size());
+        rottr_cpu_reset(&randomCpu, randomGuest.base, randomGuest.base + 0xf0U);
+        (void)rottr::runX64Interpreter(randomCpu, randomGuest, 16);
+        if (!expect(guardedMemory.front() == kGuard &&
+                    guardedMemory.back() == kGuard,
+                    "random instruction streams must stay inside guest memory"))
+            return 1;
+    }
+
     // mov rax, 7; mov rcx, 5; add rax, rcx; push rax; xor rax, rax;
     // pop rdx; cmp rdx, 12; jne fail; hlt; fail: hlt
     constexpr std::array<uint8_t, 36> code = {

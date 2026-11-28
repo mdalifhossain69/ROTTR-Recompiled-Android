@@ -39,7 +39,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 11. ✅ Apply final section protections. **Pass:** writing to `.text` fails (`tests/test_pe_loader`, host).
 12. ✅ Resolve imports by name and ordinal, with a trap for each missing one. **Pass:** calling a missing import logs DLL and function name and stops (`tests/test_pe_loader`, host).
 13. ✅ Parse exports, including forwarders. **Pass:** name, ordinal and forwarded lookups resolve (`tests/test_pe_loader`, host).
-14. Load guest DLLs with dependencies and reference counts. **Pass:** your EXE calls your DLL; a dependency cycle does not hang.
+14. ✅ Load guest DLLs with dependencies and reference counts. **Pass:** `tests/test_pe_modules` loads an EXE importing `DepFunc`, calls it through the DLL's IAT, verifies the nested `BaseFunc` dependency returns 42, checks dependency reference counts, and resolves both exports in a cyclic DLL dependency without missing-import traps (host).
 15. ✅ Create PEB, TEB, stack and the GS base. **Pass:** gs:[0x30] returns TEB address, gs:[0x60] returns PEB address (`tests/test_win32_gs`, host). GS segment override (0x65) handled in x64 interpreter with gsBase field on rottr_cpu.
 16. ✅ Set up static TLS and TLS callbacks (build this test with the MSVC target). **Pass:** callback runs before entry; TLS variable has its initial value (`tests/test_win32_tls`, host). Added `mov r/m32, imm32` (0xC7) support to x64 interpreter including RIP-relative addressing.
 17. ✅ Call `DllMain` and entry points in dependency order. **Pass:** logged order matches the same program on Windows (`tests/test_win32_dllmain`, host). Dependencies are tracked from imports after load so initialization order is correct even with recursive loading.
@@ -47,9 +47,9 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 
 ## Phase D: CPU interpreter
 
-19. ✅ Separate the instruction decoder from execution (a maintained decoder library such as Zydis is an option). **Pass:** existing tests pass; random bytes never read out of bounds (`runtime/include/rottr/x64_decoder.h`, `runtime/src/x64_interpreter.cpp`).
-20. ✅ Add differential testing against real x86-64 hardware on the CI runner. **Pass:** registers, defined flags and memory match (`tests/test_x64_interpreter`, host).
-21. ✅ Handle all prefixes, ModRM forms and high-byte registers. **Pass:** differential tests match.
+19. Separate instruction decoding from execution (a maintained decoder library such as Zydis is an option). **Partial:** the bounded instruction-byte reader is extracted to `runtime/include/rottr/x64_decoder.h`, and `tests/test_x64_interpreter` now checks hostile addresses, non-executable memory, the 15-byte limit, and deterministic random instruction bytes. Opcode-specific operand decoding still happens inside execution; full decoder/executor separation is not complete.
+20. Add differential testing against real x86-64 hardware on the CI runner. **Not done:** current interpreter tests assert selected expected results; no test harness comparing interpreter registers, flags, and memory against native x86-64 execution was found.
+21. Handle all prefixes, ModRM forms and high-byte registers. **Not done:** only a subset is implemented. In particular, FS override (`0x64`) currently aliases GS (`0x65`), and the interpreter does not support all ModRM forms.
 22. ✅ Complete integer, stack, call, multiply, divide and bit instructions. **Pass:** differential tests match, including divide faults.
 23. ✅ Add string instructions with `REP`. **Pass:** `MOVS`, `CMPS`, `SCAS`, `LODS`, `STOS` with byte/word/dword/qword sizes and `REP`/`REPE`/`REPNE` prefixes implemented in `runtime/src/x64_interpreter.cpp`; `tests/test_x64_interpreter` verifies rep movsb, rep stosb, lodsb, and repne scasb on host.
 24. ✅ Add atomics and fences with x86 memory ordering. **Pass:** multithreaded counter and litmus tests. `tests/test_x64_atomics` verifies XCHG/XADD/CMPXCHG semantics, a 4-thread `LOCK ADD` counter (800000 increments, none lost) and an MFENCE store-buffer litmus on host; guest memory uses relaxed atomics so concurrent interpreter threads are race-free. Phone run pending.
