@@ -32,6 +32,15 @@ jobs:
           head -c 2 tests/windows/rottr-win64-test.exe | od -An -tx1 | grep -q '4d 5a'
           ls -lh tests/windows/rottr-win64-test.exe
 
+      - name: Import coverage report (roadmap step 45)
+        run: |
+          cmake --build build/host-tests --parallel 2 --target rottr_import_report
+          ./build/host-tests/rottr_import_report tests/windows/rottr-win64-test.exe | tee /tmp/import-report.txt
+          grep -q "Import coverage:" /tmp/import-report.txt
+          if [ -f ROTTR.exe ]; then
+            ./build/host-tests/rottr_import_report ROTTR.exe | tee /tmp/rottr-import-report.txt
+          fi
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:

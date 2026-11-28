@@ -22,6 +22,7 @@ add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_com.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_net.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_system.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/import_report.cpp
 )
 target_include_directories(rottr_core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
 target_compile_options(rottr_core PRIVATE -Wall -Wextra -Werror)
@@ -173,6 +174,16 @@ add_executable(test_win32_net tests/test_win32_net.cpp)
 target_link_libraries(test_win32_net PRIVATE rottr_core)
 target_compile_options(test_win32_net PRIVATE -Wall -Wextra -Werror)
 add_test(NAME win32_net COMMAND test_win32_net)
+
+add_executable(test_import_report tests/test_import_report.cpp)
+target_link_libraries(test_import_report PRIVATE rottr_core)
+target_include_directories(test_import_report PRIVATE tests)
+target_compile_options(test_import_report PRIVATE -Wall -Wextra -Werror)
+add_test(NAME import_report COMMAND test_import_report)
+
+add_executable(rottr_import_report tools/import_report.cpp)
+target_link_libraries(rottr_import_report PRIVATE rottr_core)
+target_compile_options(rottr_import_report PRIVATE -Wall -Wextra -Werror)
 
 add_executable(test_win32_sync tests/test_win32_sync.cpp)
 target_link_libraries(test_win32_sync PRIVATE rottr_core)
