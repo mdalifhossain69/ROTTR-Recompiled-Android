@@ -707,17 +707,14 @@ bool PeModuleRegistry::resolveImport(const PeImportRequest& request,
         ++module->refs;
     }
     if (module == nullptr || module->image == nullptr || module->failed) return false;
-    const std::string key = normalize(request.module);
-    if (std::find(module->dependencies.begin(), module->dependencies.end(), key) ==
-        module->dependencies.end())
-        module->dependencies.push_back(key);
     if (!resolveExport(module->image.get(), request.function, request.ordinal,
                        request.byOrdinal, address, 0))
         return false;
     return true;
 }
 
-PeImage* PeModuleRegistry::loadModule(const std::string& name, std::string* error) {
+PeImage* PeModuleRegistry::loadModule(const std::string& name, std::string* error,
+                                      const PeLoadOptions& extraOptions) {
     const std::string key = normalize(name);
     if (Module* existing = findModuleEntry(key)) {
         if (existing->failed) {
@@ -746,18 +743,31 @@ PeImage* PeModuleRegistry::loadModule(const std::string& name, std::string* erro
     module.refs = 1;
     module.loading = true;
     modules_.push_back(std::move(module));
-    PeImage* result = modules_.back().image.get();
+    const size_t myIndex = modules_.size() - 1;
+    PeImage* result = modules_[myIndex].image.get();
 
-    PeLoadOptions options;
+    PeLoadOptions options = extraOptions;
     options.importResolver = [this](const PeImportRequest& request, uint64_t& address) {
         return resolveImport(request, address);
     };
     const PeLoadError status = result->load(memory_, bytes.data(), bytes.size(), options);
-    modules_.back().loading = false;
+    modules_[myIndex].loading = false;
     if (status != PeLoadError::None) {
-        modules_.back().failed = true;
+        modules_[myIndex].failed = true;
         if (error) *error = std::string(describePeLoadError(status)) + ": " + name;
         return nullptr;
+    }
+    // Record dependencies from this module's imports (for initialization
+    // order: dependencies must initialize before dependents). Use myIndex
+    // (not modules_.back()) because recursive loadModule calls may have
+    // appended new modules after this one.
+    for (const auto& imp : result->imports()) {
+        const std::string& depName = imp.module;
+        if (std::find(modules_[myIndex].dependencies.begin(),
+                      modules_[myIndex].dependencies.end(),
+                      depName) == modules_[myIndex].dependencies.end()) {
+            modules_[myIndex].dependencies.push_back(depName);
+        }
     }
     return result;
 }
@@ -783,6 +793,47 @@ std::vector<PeImage*> PeModuleRegistry::initializationOrder() const {
     };
     for (size_t i = 0; i < modules_.size(); ++i) visit(i);
     return order;
+}
+
+std::vector<uint64_t> PeImage::tlsCallbackAddresses() const {
+    std::vector<uint64_t> result;
+    if (!hasTls() || tlsCallbacks_ == 0) return result;
+    // Read the null-terminated array of 8-byte callback addresses (each an RVA).
+    for (uint64_t off = 0;; off += 8ULL) {
+        uint64_t addr = 0;
+        if (!read(base_ + tlsCallbacks_ + off, &addr, sizeof(addr))) break;
+        if (addr == 0) break;
+        result.push_back(base_ + addr);  // Convert RVA to guest VA
+    }
+    return result;
+}
+
+bool PeImage::runTlsCallbacks(rottr_cpu& cpu,
+                              const X64GuestMemory& guest) const {
+    const std::vector<uint64_t> cbs = tlsCallbackAddresses();
+    if (cbs.empty()) return true;
+    const uint64_t kDllHandle = base_;
+    const uint32_t kProcessAttach = 1u;
+    for (uint64_t cb : cbs) {
+        uint64_t result = 0;
+        if (!rottr::callGuestProc(rottr::registerGuestCallback(cb), cpu, guest,
+                                  kDllHandle, kProcessAttach, 0, 0, result)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PeImage::callDllMain(rottr_cpu& cpu, const X64GuestMemory& guest,
+                          uint32_t reason, uint64_t& outResult) const {
+    if (!loaded() || !isDll()) return false;
+    uint64_t result = 0;
+    if (!rottr::callGuestProc(rottr::registerGuestCallback(entryPoint()), cpu,
+                              guest, base_, reason, 0, 0, result)) {
+        return false;
+    }
+    outResult = result;
+    return true;
 }
 
 int PeModuleRegistry::refCount(const std::string& name) const {

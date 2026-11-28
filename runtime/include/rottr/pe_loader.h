@@ -2,7 +2,9 @@
 // user-supplied executable; it never bypasses store or ownership checks.
 #pragma once
 
+#include "rottr/guest.h"
 #include "rottr/guest_mem.h"
+#include "rottr/x64_runtime.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -137,6 +139,22 @@ public:
     uint64_t tlsCallbacks() const { return tlsCallbacks_; }
     uint32_t tlsZeroFill() const { return tlsZeroFill_; }
 
+    // Guest addresses of all TLS callbacks (empty when no TLS directory or
+    // the callback array is empty). Reads guest memory directly.
+    std::vector<uint64_t> tlsCallbackAddresses() const;
+
+    // Runs every TLS callback for this image in order (step 16). Each
+    // callback is called as (imageBase, DLL_PROCESS_ATTACH, 0). Returns
+    // false if any callback faults. The CPU's RIP/RSP are preserved across
+    // each call.
+    bool runTlsCallbacks(rottr_cpu& cpu, const X64GuestMemory& guest) const;
+
+    // Calls DllMain at this image's entry point with the given reason
+    // (step 17). Returns false if the call faults; outResult receives the
+    // BOOL return value. CPU RIP/RSP are preserved.
+    bool callDllMain(rottr_cpu& cpu, const X64GuestMemory& guest,
+                     uint32_t reason, uint64_t& outResult) const;
+
     std::string describe() const;
 
 private:
@@ -180,13 +198,23 @@ public:
     // Takes ownership of an already mapped image (used for the main EXE).
     PeImage* addImage(std::unique_ptr<PeImage> image, const std::string& name);
     PeImage* findModule(const std::string& name) const;
-    PeImage* loadModule(const std::string& name, std::string* error);
+    PeImage* loadModule(const std::string& name, std::string* error,
+                        const PeLoadOptions& options = {});
     // Used as the import resolver of the main EXE and of every guest DLL.
     bool resolveImport(const PeImportRequest& request, uint64_t& address);
 
     // Order in which module entry points must run: dependencies first.
     std::vector<PeImage*> initializationOrder() const;
     int refCount(const std::string& name) const;
+
+    // Step 16: Invoke a loaded module's TLS callbacks (DLL_PROCESS_ATTACH).
+    // Returns false if any callback faults.
+    bool runTlsCallbacks(PeImage* image, rottr_cpu& cpu,
+                         const X64GuestMemory& memory);
+
+    // Step 17: Call each module's entry point (DllMain for DLLs) in
+    // initialization order. Returns false if any entry point faults.
+    bool callEntryPoints(rottr_cpu& cpu, const X64GuestMemory& memory);
     size_t moduleCount() const { return modules_.size(); }
     std::string describe() const;
 

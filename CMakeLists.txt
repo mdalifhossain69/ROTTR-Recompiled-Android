@@ -142,6 +142,16 @@ target_link_libraries(test_win32_gs PRIVATE rottr_core)
 target_compile_options(test_win32_gs PRIVATE -Wall -Wextra -Werror)
 add_test(NAME win32_gs COMMAND test_win32_gs)
 
+add_executable(test_win32_tls tests/test_win32_tls.cpp)
+target_link_libraries(test_win32_tls PRIVATE rottr_core)
+target_compile_options(test_win32_tls PRIVATE -Wall -Wextra -Werror)
+add_test(NAME win32_tls COMMAND test_win32_tls)
+
+add_executable(test_win32_dllmain tests/test_win32_dllmain.cpp)
+target_link_libraries(test_win32_dllmain PRIVATE rottr_core)
+target_compile_options(test_win32_dllmain PRIVATE -Wall -Wextra -Werror)
+add_test(NAME win32_dllmain COMMAND test_win32_dllmain)
+
 add_executable(test_x64_runtime tests/test_x64_runtime.cpp)
 target_link_libraries(test_x64_runtime PRIVATE rottr_core)
 target_compile_options(test_x64_runtime PRIVATE -Wall -Wextra -Werror)

@@ -45,6 +45,8 @@ public:
 
     void dll(bool value) {
         put<uint16_t>(file, 0x86, value ? 0x2102U : 0x0102U);
+        // COFF header Characteristics field at peOffset + 22 = 0x96
+        put<uint16_t>(file, 0x96, value ? 0x2000U : 0x0000U);
     }
 
     void directory(uint32_t index, uint32_t rva, uint32_t size) {
@@ -73,6 +75,11 @@ public:
     uint32_t rawoffsetFor(uint32_t rva) const { return rva - 0x2000U + 0x1000U; }
 
     std::vector<uint8_t> build() const { return file; }
+
+    // Set the TLS directory (data directory index 9).
+    void tlsDirectory(uint32_t rva, uint32_t size) {
+        directory(9, rva, size);
+    }
 
     std::vector<uint8_t> file;
 

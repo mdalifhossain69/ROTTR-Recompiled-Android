@@ -41,8 +41,8 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 13. ✅ Parse exports, including forwarders. **Pass:** name, ordinal and forwarded lookups resolve (`tests/test_pe_loader`, host).
 14. Load guest DLLs with dependencies and reference counts. **Pass:** your EXE calls your DLL; a dependency cycle does not hang.
 15. ✅ Create PEB, TEB, stack and the GS base. **Pass:** gs:[0x30] returns TEB address, gs:[0x60] returns PEB address (`tests/test_win32_gs`, host). GS segment override (0x65) handled in x64 interpreter with gsBase field on rottr_cpu.
-16. Set up static TLS and TLS callbacks (build this test with the MSVC target). **Pass:** callback runs before entry; variable has its initial value.
-17. Call `DllMain` and entry points in dependency order. **Pass:** logged order matches the same program on Windows.
+16. ✅ Set up static TLS and TLS callbacks (build this test with the MSVC target). **Pass:** callback runs before entry; TLS variable has its initial value (`tests/test_win32_tls`, host). Added `mov r/m32, imm32` (0xC7) support to x64 interpreter including RIP-relative addressing.
+17. ✅ Call `DllMain` and entry points in dependency order. **Pass:** logged order matches the same program on Windows (`tests/test_win32_dllmain`, host). Dependencies are tracked from imports after load so initialization order is correct even with recursive loading.
 18. ✅ Load your own import-free EXE whose entry returns 42. **Pass:** interpreter ends with RAX equal to 42 (`tests/test_pe_execute`, host).
 
 ## Phase D: CPU interpreter

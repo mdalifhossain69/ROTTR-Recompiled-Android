@@ -303,6 +303,30 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         return writeOperandSized(memory, cpu, rm, 1, static_cast<uint64_t>(imm));
     }
 
+    // ---- MOV: C7 /0 (mov r/m32, imm32) ----
+    if (opcode == 0xc7) {
+        uint8_t modrm = 0;
+        if (!decoder.byte(modrm)) return false;
+        const unsigned mod = modrm >> 6U;
+        const unsigned rm = modrm & 7U;
+        if (mod == 0 && rm == 5) {
+            // RIP-relative: [rip + disp32]. decoder.next() is after
+            // opcode+modrm+disp32 (start+6); correct RIP is start+10
+            // (after imm32), so add the imm32 size (4) to compensate.
+            int32_t disp32 = 0;
+            if (!decoder.immediate(disp32)) return false;
+            uint64_t addr = decoder.next() + static_cast<uint64_t>(disp32) + 4U;
+            uint32_t imm = 0;
+            if (!decoder.immediate(imm)) return false;
+            return writeGuest(memory, addr, &imm, 4);
+        }
+        RmOperand rmOp;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rmOp, segBase)) return false;
+        uint32_t imm = 0;
+        if (!decoder.immediate(imm)) return false;
+        return writeOperandSized(memory, cpu, rmOp, 4, static_cast<uint64_t>(imm));
+    }
+
     // ---- PUSH: 50+r (push r64) ----
     if (opcode >= 0x50 && opcode <= 0x57) {
         unsigned regIndex = (opcode & 7) | (rex.b << 3);
