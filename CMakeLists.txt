@@ -24,6 +24,7 @@ add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_system.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/import_report.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/arm64_emitter.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/arm64_code_buffer.cpp
 )
 target_include_directories(rottr_core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
 target_compile_options(rottr_core PRIVATE -Wall -Wextra -Werror)
@@ -191,6 +192,12 @@ if(LLVM_MC_EXECUTABLE)
 endif()
 add_test(NAME arm64_emitter COMMAND test_arm64_emitter)
 set_tests_properties(arm64_emitter PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(test_arm64_code_buffer tests/test_arm64_code_buffer.cpp)
+target_link_libraries(test_arm64_code_buffer PRIVATE rottr_core)
+target_compile_options(test_arm64_code_buffer PRIVATE -Wall -Wextra -Werror)
+add_test(NAME arm64_code_buffer COMMAND test_arm64_code_buffer)
+set_tests_properties(arm64_code_buffer PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(rottr_import_report tools/import_report.cpp)
 target_link_libraries(rottr_import_report PRIVATE rottr_core)
