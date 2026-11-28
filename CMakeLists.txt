@@ -14,6 +14,7 @@ add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/remill_intrinsics.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_stubs.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_runtime.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_decoder.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_interpreter.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/x64_bridge.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_host.cpp
