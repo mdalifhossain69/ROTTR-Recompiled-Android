@@ -844,8 +844,11 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         bool isStos = (opcode == 0xaa || opcode == 0xab);
 
         size_t size = (opcode == 0xa4 || opcode == 0xa6 || opcode == 0xae ||
-                       opcode == 0xac || opcode == 0xaa) ? 1 : opSize;
+                       opcode == 0xac || opcode == 0xaa) ? 1 :
+                      (rexW ? 8 : (opSizeOverride == 2 ? 2 : 4));
         bool df = (cpu.rflags & (1ULL << 10)) != 0;
+        const bool repeated = repPrefix != 0;
+        if (repeated && cpu.gpr[1] == 0) return true;
 
         do {
             if (isMovs) {
@@ -883,9 +886,9 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
                 cpu.gpr[7] += df ? -(int64_t)size : (int64_t)size;
             }
 
-            cpu.gpr[1] -= 1;
+            if (repeated) cpu.gpr[1] -= 1;
 
-            if (repPrefix == 0) break;
+            if (!repeated) break;
             if (cpu.gpr[1] == 0) break;
             if (repPrefix == 1) {
                 if (isMovs || isLods || isStos) continue;

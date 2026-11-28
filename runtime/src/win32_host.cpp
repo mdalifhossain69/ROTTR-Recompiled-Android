@@ -11,7 +11,9 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <limits>
 #include <pthread.h>
 #include <semaphore.h>
 #include <string>
@@ -22,9 +24,20 @@
 #include <vector>
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <ctime>
 
 namespace rottr {
+
+struct EventEntry;
+struct MutexEntry;
+struct SemEntry;
+extern std::map<uint64_t, std::shared_ptr<EventEntry>> g_events;
+extern std::mutex g_eventsMutex;
+extern std::map<uint64_t, std::shared_ptr<MutexEntry>> g_mutexes;
+extern std::mutex g_mutexesMutex;
+extern std::map<uint64_t, std::shared_ptr<SemEntry>> g_semaphores;
+extern std::mutex g_semaphoresMutex;
 
 namespace {
 
@@ -78,23 +91,50 @@ std::mutex g_criticalSectionsMutex;
 struct EventEntry {
     bool manualReset = false;
     bool signaled = false;
-    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-    pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t mutex{};
+    pthread_cond_t cond{};
+    bool mutexInitialized = false;
+    bool condInitialized = false;
+
+    ~EventEntry() {
+        if (condInitialized) pthread_cond_destroy(&cond);
+        if (mutexInitialized) pthread_mutex_destroy(&mutex);
+    }
 };
 
-std::map<uint64_t, EventEntry> g_events;
+std::map<uint64_t, std::shared_ptr<EventEntry>> g_events;
 std::mutex g_eventsMutex;
 
 // ---- Mutexes ----
-std::map<uint64_t, pthread_mutex_t*> g_mutexes;
+struct MutexEntry {
+    pthread_mutex_t native{};
+    std::mutex stateMutex;
+    pthread_t owner{};
+    unsigned recursion = 0;
+    bool owned = false;
+    bool initialized = false;
+
+    ~MutexEntry() {
+        if (initialized) pthread_mutex_destroy(&native);
+    }
+};
+
+std::map<uint64_t, std::shared_ptr<MutexEntry>> g_mutexes;
 std::mutex g_mutexesMutex;
 
 // ---- Semaphores ----
 struct SemEntry {
-    sem_t sem;
+    sem_t sem{};
+    std::mutex releaseMutex;
+    unsigned maxCount = 0;
+    bool initialized = false;
+
+    ~SemEntry() {
+        if (initialized) sem_destroy(&sem);
+    }
 };
 
-std::map<uint64_t, SemEntry> g_semaphores;
+std::map<uint64_t, std::shared_ptr<SemEntry>> g_semaphores;
 std::mutex g_semaphoresMutex;
 
 // ---- Threads ----
@@ -426,11 +466,26 @@ extern "C" uint64_t host_CloseHandle(uint64_t handle, uint64_t, uint64_t,
         }
     }
 
-    std::lock_guard<std::mutex> lock(g_handlesMutex);
-    auto it = g_handles.find(handle);
-    if (it == g_handles.end()) return 0; // FALSE: invalid handle
-    if (it->second.file) std::fclose(it->second.file);
-    g_handles.erase(it);
+    uint64_t type = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_handlesMutex);
+        auto it = g_handles.find(handle);
+        if (it == g_handles.end()) return 0; // FALSE: invalid handle
+        type = it->second.type;
+        if (it->second.file) std::fclose(it->second.file);
+        g_handles.erase(it);
+    }
+
+    if (type == 2) {
+        std::lock_guard<std::mutex> lock(g_eventsMutex);
+        if (g_events.erase(handle) == 0) return 0;
+    } else if (type == 3) {
+        std::lock_guard<std::mutex> lock(g_mutexesMutex);
+        if (g_mutexes.erase(handle) == 0) return 0;
+    } else if (type == 4) {
+        std::lock_guard<std::mutex> lock(g_semaphoresMutex);
+        if (g_semaphores.erase(handle) == 0) return 0;
+    }
 
     // If this was a thread handle, detach the pthread if still running.
     {
@@ -745,83 +800,141 @@ extern "C" uint64_t host_CreateEventA(uint64_t sa, uint64_t manualReset,
                                       uint64_t, uint64_t, uint64_t,
                                       uint64_t) {
     (void)sa; (void)name;
-    uint64_t h = allocHandle(2); // event handle
-    EventEntry e;
-    e.manualReset = manualReset != 0;
-    e.signaled = initialState != 0;
-    pthread_mutex_init(&e.mutex, nullptr);
-    pthread_cond_init(&e.cond, nullptr);
+    auto event = std::make_shared<EventEntry>();
+    event->manualReset = manualReset != 0;
+    event->signaled = initialState != 0;
+    if (pthread_mutex_init(&event->mutex, nullptr) != 0) return 0;
+    event->mutexInitialized = true;
+    if (pthread_cond_init(&event->cond, nullptr) != 0) return 0;
+    event->condInitialized = true;
+    const uint64_t h = allocHandle(2);
     std::lock_guard<std::mutex> lock(g_eventsMutex);
-    g_events.emplace(h, e);
+    g_events.emplace(h, std::move(event));
     return h;
 }
 
 extern "C" uint64_t host_SetEvent(uint64_t event, uint64_t, uint64_t, uint64_t,
                                   uint64_t, uint64_t, uint64_t, uint64_t) {
-    std::lock_guard<std::mutex> lock(g_eventsMutex);
-    auto it = g_events.find(event);
-    if (it == g_events.end()) return 0;
-    EventEntry& e = it->second;
-    pthread_mutex_lock(&e.mutex);
-    e.signaled = true;
-    pthread_cond_broadcast(&e.cond);
-    pthread_mutex_unlock(&e.mutex);
+    std::shared_ptr<EventEntry> entry;
+    {
+        std::lock_guard<std::mutex> lock(g_eventsMutex);
+        auto it = g_events.find(event);
+        if (it == g_events.end()) return 0;
+        entry = it->second;
+    }
+    pthread_mutex_lock(&entry->mutex);
+    entry->signaled = true;
+    pthread_cond_broadcast(&entry->cond);
+    pthread_mutex_unlock(&entry->mutex);
     return 1;
 }
 
 extern "C" uint64_t host_WaitForSingleObject(uint64_t handle, uint64_t timeout,
                                              uint64_t, uint64_t, uint64_t,
                                              uint64_t, uint64_t, uint64_t) {
-    // Try event first
+    constexpr uint64_t kInfinite = 0xffffffffULL;
+    constexpr uint64_t kWaitTimeout = 0x102ULL;
+    constexpr uint64_t kWaitFailed = 0xffffffffULL;
+
+    timespec deadline{};
+    if (timeout != 0 && timeout != kInfinite) {
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_sec += static_cast<time_t>(timeout / 1000U);
+        deadline.tv_nsec += static_cast<long>((timeout % 1000U) * 1000000U);
+        if (deadline.tv_nsec >= 1000000000L) {
+            ++deadline.tv_sec;
+            deadline.tv_nsec -= 1000000000L;
+        }
+    }
+
+    // Try event first.
     {
-        EventEntry* e = nullptr;
+        std::shared_ptr<EventEntry> entry;
         {
             std::lock_guard<std::mutex> lock(g_eventsMutex);
             auto it = g_events.find(handle);
-            if (it != g_events.end()) e = &it->second;
+            if (it != g_events.end()) entry = it->second;
         }
-        if (e) {
-            pthread_mutex_lock(&e->mutex);
-            while (!e->signaled) {
-                if (timeout == 0) {
-                    pthread_mutex_unlock(&e->mutex);
-                    return 0x102; // WAIT_TIMEOUT
+        if (entry) {
+            pthread_mutex_lock(&entry->mutex);
+            while (!entry->signaled) {
+                const int waitResult = timeout == kInfinite
+                        ? pthread_cond_wait(&entry->cond, &entry->mutex)
+                        : (timeout == 0
+                                ? ETIMEDOUT
+                                : pthread_cond_timedwait(&entry->cond,
+                                                         &entry->mutex,
+                                                         &deadline));
+                if (waitResult == ETIMEDOUT) {
+                    pthread_mutex_unlock(&entry->mutex);
+                    return kWaitTimeout;
                 }
-                pthread_cond_wait(&e->cond, &e->mutex);
+                if (waitResult != 0) {
+                    pthread_mutex_unlock(&entry->mutex);
+                    return kWaitFailed;
+                }
             }
-            if (!e->manualReset) e->signaled = false;
-            pthread_mutex_unlock(&e->mutex);
+            if (!entry->manualReset) entry->signaled = false;
+            pthread_mutex_unlock(&entry->mutex);
             return 0; // WAIT_OBJECT_0
         }
     }
 
     // Try mutex
     {
-        pthread_mutex_t* m = nullptr;
+        std::shared_ptr<MutexEntry> entry;
         {
             std::lock_guard<std::mutex> lock(g_mutexesMutex);
             auto it = g_mutexes.find(handle);
-            if (it != g_mutexes.end()) m = it->second;
+            if (it != g_mutexes.end()) entry = it->second;
         }
-        if (m) {
-            pthread_mutex_lock(m);
+        if (entry) {
+            int lockResult = 0;
+            if (timeout == 0) {
+                lockResult = pthread_mutex_trylock(&entry->native);
+            } else if (timeout == kInfinite) {
+                lockResult = pthread_mutex_lock(&entry->native);
+            } else {
+                lockResult = pthread_mutex_timedlock(&entry->native, &deadline);
+            }
+            if (lockResult == EBUSY || lockResult == ETIMEDOUT)
+                return kWaitTimeout;
+            if (lockResult != 0) return kWaitFailed;
+            {
+                std::lock_guard<std::mutex> lock(entry->stateMutex);
+                const pthread_t self = pthread_self();
+                if (entry->owned && pthread_equal(entry->owner, self)) {
+                    ++entry->recursion;
+                } else {
+                    entry->owned = true;
+                    entry->owner = self;
+                    entry->recursion = 1;
+                }
+            }
             return 0; // WAIT_OBJECT_0
         }
     }
 
     // Try semaphore
     {
-        sem_t* s = nullptr;
+        std::shared_ptr<SemEntry> entry;
         {
             std::lock_guard<std::mutex> lock(g_semaphoresMutex);
             auto it = g_semaphores.find(handle);
-            if (it != g_semaphores.end()) s = &it->second.sem;
+            if (it != g_semaphores.end()) entry = it->second;
         }
-        if (s) {
-            if (sem_trywait(s) == 0) return 0; // WAIT_OBJECT_0
-            if (timeout == 0) return 0x102; // WAIT_TIMEOUT
-            sem_wait(s);
-            return 0;
+        if (entry) {
+            int waitResult = 0;
+            if (timeout == 0) {
+                waitResult = sem_trywait(&entry->sem);
+            } else if (timeout == kInfinite) {
+                waitResult = sem_wait(&entry->sem);
+            } else {
+                waitResult = sem_timedwait(&entry->sem, &deadline);
+            }
+            if (waitResult == 0) return 0;
+            if (errno == EAGAIN || errno == ETIMEDOUT) return kWaitTimeout;
+            return kWaitFailed;
         }
     }
 
@@ -847,32 +960,60 @@ extern "C" uint64_t host_WaitForSingleObject(uint64_t handle, uint64_t timeout,
         if (g_handles.count(handle)) return 0;
     }
 
-    return 0x102; // WAIT_TIMEOUT for unknown handle
+    return kWaitFailed;
 }
 
 extern "C" uint64_t host_CreateMutexA(uint64_t sa, uint64_t initialOwner,
                                       uint64_t name, uint64_t,
                                       uint64_t, uint64_t, uint64_t, uint64_t) {
-    (void)sa; (void)initialOwner; (void)name;
-    uint64_t h = allocHandle(3); // mutex handle
-    pthread_mutex_t* m = new pthread_mutex_t();
-    pthread_mutex_init(m, nullptr);
+    (void)sa; (void)name;
+    auto entry = std::make_shared<MutexEntry>();
+    pthread_mutexattr_t attributes;
+    if (pthread_mutexattr_init(&attributes) != 0) return 0;
+    const int typeResult =
+            pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    const int initResult = typeResult == 0
+            ? pthread_mutex_init(&entry->native, &attributes)
+            : typeResult;
+    pthread_mutexattr_destroy(&attributes);
+    if (initResult != 0) return 0;
+    entry->initialized = true;
+    if (initialOwner != 0) {
+        if (pthread_mutex_lock(&entry->native) != 0) return 0;
+        entry->owner = pthread_self();
+        entry->recursion = 1;
+        entry->owned = true;
+    }
+    const uint64_t h = allocHandle(3);
     std::lock_guard<std::mutex> lock(g_mutexesMutex);
-    g_mutexes.emplace(h, m);
+    g_mutexes.emplace(h, std::move(entry));
     return h;
 }
 
 extern "C" uint64_t host_ReleaseMutex(uint64_t mutex, uint64_t, uint64_t,
                                       uint64_t, uint64_t, uint64_t, uint64_t,
                                       uint64_t) {
-    pthread_mutex_t* m = nullptr;
+    std::shared_ptr<MutexEntry> entry;
     {
         std::lock_guard<std::mutex> lock(g_mutexesMutex);
         auto it = g_mutexes.find(mutex);
-        if (it == g_mutexes.end()) return 0;
-        m = it->second;
+        if (it == g_mutexes.end()) {
+            host_SetLastError(6, 0, 0, 0, 0, 0, 0, 0);
+            return 0;
+        }
+        entry = it->second;
     }
-    pthread_mutex_unlock(m);
+    std::lock_guard<std::mutex> lock(entry->stateMutex);
+    if (!entry->owned || !pthread_equal(entry->owner, pthread_self())) {
+        host_SetLastError(288, 0, 0, 0, 0, 0, 0, 0);
+        return 0;
+    }
+    --entry->recursion;
+    if (entry->recursion == 0) entry->owned = false;
+    if (pthread_mutex_unlock(&entry->native) != 0) {
+        host_SetLastError(288, 0, 0, 0, 0, 0, 0, 0);
+        return 0;
+    }
     return 1;
 }
 
@@ -880,12 +1021,18 @@ extern "C" uint64_t host_CreateSemaphoreA(uint64_t sa, uint64_t initialCount,
                                           uint64_t maxCount, uint64_t name,
                                           uint64_t, uint64_t, uint64_t,
                                           uint64_t) {
-    (void)sa; (void)maxCount; (void)name;
-    uint64_t h = allocHandle(4); // semaphore handle
-    SemEntry se;
-    sem_init(&se.sem, 0, static_cast<unsigned>(initialCount));
+    (void)sa; (void)name;
+    if (maxCount == 0 || initialCount > maxCount ||
+        maxCount > std::numeric_limits<unsigned>::max())
+        return 0;
+    auto entry = std::make_shared<SemEntry>();
+    if (sem_init(&entry->sem, 0, static_cast<unsigned>(initialCount)) != 0)
+        return 0;
+    entry->initialized = true;
+    entry->maxCount = static_cast<unsigned>(maxCount);
+    const uint64_t h = allocHandle(4);
     std::lock_guard<std::mutex> lock(g_semaphoresMutex);
-    g_semaphores.emplace(h, se);
+    g_semaphores.emplace(h, std::move(entry));
     return h;
 }
 
@@ -893,12 +1040,26 @@ extern "C" uint64_t host_ReleaseSemaphore(uint64_t sem, uint64_t count,
                                           uint64_t prevCount, uint64_t,
                                           uint64_t, uint64_t, uint64_t,
                                           uint64_t) {
-    (void)prevCount;
-    std::lock_guard<std::mutex> lock(g_semaphoresMutex);
-    auto it = g_semaphores.find(sem);
-    if (it == g_semaphores.end()) return 0;
-    SemEntry& se = it->second;
-    for (uint64_t i = 0; i < count; ++i) sem_post(&se.sem);
+    std::shared_ptr<SemEntry> entry;
+    {
+        std::lock_guard<std::mutex> lock(g_semaphoresMutex);
+        auto it = g_semaphores.find(sem);
+        if (it == g_semaphores.end()) return 0;
+        entry = it->second;
+    }
+    if (count == 0 || count > entry->maxCount) return 0;
+    std::lock_guard<std::mutex> lock(entry->releaseMutex);
+    int currentCount = 0;
+    if (sem_getvalue(&entry->sem, &currentCount) != 0 ||
+        currentCount < 0 ||
+        static_cast<uint64_t>(currentCount) + count > entry->maxCount)
+        return 0;
+    if (prevCount != 0)
+        *reinterpret_cast<uint32_t*>(prevCount) =
+                static_cast<uint32_t>(currentCount);
+    for (uint64_t i = 0; i < count; ++i) {
+        if (sem_post(&entry->sem) != 0) return 0;
+    }
     return 1;
 }
 

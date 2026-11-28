@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace {
 bool expect(bool condition, const char* message) {
@@ -487,6 +488,210 @@ int main() {
         !expect(cpu.gpr[7] == 0x1043, "repne scasb must point RDI past found byte") ||
         !expect(cpu.gpr[1] == 1, "repne scasb must decrement RCX for each comparison")) {
         return 1;
+    }
+
+    // A string instruction without REP executes once and preserves RCX.
+    constexpr uint8_t movsbNoRepProgram[] = {
+        0x48,0xbe,0x40,0x10,0,0,0,0,0,0,
+        0x48,0xbf,0x80,0x10,0,0,0,0,0,0,
+        0x48,0xb9,2,0,0,0,0,0,0,0,
+        0xa4,0xf4
+    };
+    memory.fill(0);
+    std::memcpy(memory.data(), movsbNoRepProgram, sizeof(movsbNoRepProgram));
+    memory[0x40] = 0xaa;
+    memory[0x80] = 0xcc;
+    memory[0x81] = 0xdd;
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = runX64ForTest(cpu, guest, 16);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "MOVSB without REP must reach HLT") ||
+        !expect(cpu.gpr[1] == 2, "MOVSB without REP must preserve RCX") ||
+        !expect(cpu.gpr[6] == 0x1041 && cpu.gpr[7] == 0x1081,
+                "MOVSB without REP must advance RSI and RDI once") ||
+        !expect(memory[0x80] == 0xaa && memory[0x81] == 0xdd,
+                "MOVSB without REP must copy exactly one byte")) {
+        return 1;
+    }
+
+    // REP with RCX=0 performs no memory access and leaves the indices unchanged.
+    constexpr uint8_t movsbZeroCountProgram[] = {
+        0x48,0xbe,0x40,0x10,0,0,0,0,0,0,
+        0x48,0xbf,0x80,0x10,0,0,0,0,0,0,
+        0xf3,0xa4,0xf4
+    };
+    memory.fill(0);
+    std::memcpy(memory.data(), movsbZeroCountProgram, sizeof(movsbZeroCountProgram));
+    memory[0x40] = 0xaa;
+    memory[0x80] = 0xcc;
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = runX64ForTest(cpu, guest, 16);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "zero-count REP MOVSB must reach HLT") ||
+        !expect(cpu.gpr[1] == 0 && cpu.gpr[6] == 0x1040 && cpu.gpr[7] == 0x1080,
+                "zero-count REP MOVSB must preserve RCX, RSI and RDI") ||
+        !expect(memory[0x80] == 0xcc,
+                "zero-count REP MOVSB must not access the destination")) {
+        return 1;
+    }
+
+    // REP MOVSW/MOVSD/MOVSQ use their architectural element sizes.
+    constexpr uint8_t movsWidthProgram[] = {
+        0x48,0xbe,0xc0,0x10,0,0,0,0,0,0,
+        0x48,0xbf,0xd0,0x10,0,0,0,0,0,0,
+        0x48,0xb9,1,0,0,0,0,0,0,0,
+        0x66,0xf3,0xa5,
+        0x48,0xbe,0xc4,0x10,0,0,0,0,0,0,
+        0x48,0xbf,0xd4,0x10,0,0,0,0,0,0,
+        0x48,0xb9,1,0,0,0,0,0,0,0,
+        0xf3,0xa5,
+        0x48,0xbe,0xc8,0x10,0,0,0,0,0,0,
+        0x48,0xbf,0xd8,0x10,0,0,0,0,0,0,
+        0x48,0xb9,1,0,0,0,0,0,0,0,
+        0xf3,0x48,0xa5,
+        0xf4
+    };
+    memory.fill(0);
+    std::memcpy(memory.data(), movsWidthProgram, sizeof(movsWidthProgram));
+    for (size_t i = 0; i < 8; ++i)
+        memory[0xc0 + i] = static_cast<uint8_t>(0x10 + i);
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    result = runX64ForTest(cpu, guest, 64);
+    if (!expect(result.reason == rottr::X64StopReason::Halted,
+                "REP MOVSW/MOVSD/MOVSQ must reach HLT") ||
+    !expect(std::memcmp(memory.data() + 0xd0, memory.data() + 0xc0, 2) == 0 &&
+            std::memcmp(memory.data() + 0xd4, memory.data() + 0xc4, 4) == 0 &&
+            std::memcmp(memory.data() + 0xd8, memory.data() + 0xc8, 8) == 0,
+                "REP MOVSW/MOVSD/MOVSQ must copy 2/4/8-byte elements")) {
+        return 1;
+    }
+
+    auto executeString = [&](uint8_t opcode, size_t width, uint8_t repeat,
+                         uint64_t count, uint64_t accumulator) {
+    std::vector<uint8_t> code;
+    auto emit = [&code](uint8_t byte) { code.push_back(byte); };
+    auto emitImmediate = [&code](uint8_t opcodeByte, uint64_t value) {
+        code.push_back(0x48);
+        code.push_back(opcodeByte);
+        for (unsigned byte = 0; byte < 8; ++byte)
+            code.push_back(static_cast<uint8_t>(value >> (byte * 8U)));
+    };
+    emitImmediate(0xbe, 0x10c0);  // RSI
+    emitImmediate(0xbf, 0x10d0);  // RDI
+    emitImmediate(0xb9, count);   // RCX
+    emitImmediate(0xb8, accumulator);  // RAX
+    if (width == 2) emit(0x66);
+    if (repeat != 0) emit(repeat);
+    if (width == 8) emit(0x48);
+    emit(opcode);
+    emit(0xf4);
+    std::memcpy(memory.data(), code.data(), code.size());
+    rottr_cpu_reset(&cpu, 0x1000, 0x1080);
+    return runX64ForTest(cpu, guest, 64);
+    };
+    auto writePattern = [&memory](size_t offset, size_t width, uint64_t value) {
+    for (size_t byte = 0; byte < width; ++byte)
+        memory[offset + byte] = static_cast<uint8_t>(value >> (byte * 8U));
+    };
+    for (size_t width : {1U, 2U, 4U, 8U}) {
+    const uint8_t movsOpcode = width == 1 ? 0xa4 : 0xa5;
+    const uint8_t cmpsOpcode = width == 1 ? 0xa6 : 0xa7;
+    const uint8_t scasOpcode = width == 1 ? 0xae : 0xaf;
+    const uint8_t lodsOpcode = width == 1 ? 0xac : 0xad;
+    const uint8_t stosOpcode = width == 1 ? 0xaa : 0xab;
+
+    memory.fill(0);
+    writePattern(0xc0, width, 0x11);
+    writePattern(0xc0 + width, width, 0x22);
+    result = executeString(movsOpcode, width, 0xf3, 2, 0);
+    if (!expect(result.reason == rottr::X64StopReason::Halted &&
+                cpu.gpr[1] == 0 && cpu.gpr[6] == 0x10c0 + 2 * width &&
+                cpu.gpr[7] == 0x10d0 + 2 * width,
+                "REP MOVS must consume RCX and advance indices by element width") ||
+        !expect(std::memcmp(memory.data() + 0xd0, memory.data() + 0xc0,
+                            2 * width) == 0,
+                "REP MOVS must copy each supported element width"))
+        return 1;
+
+    memory.fill(0);
+    writePattern(0xc0, width, 0x11);
+    writePattern(0xc0 + width, width, 0x22);
+    writePattern(0xd0, width, 0x11);
+    writePattern(0xd0 + width, width, 0x23);
+    result = executeString(cmpsOpcode, width, 0xf3, 3, 0);
+    if (!expect(result.reason == rottr::X64StopReason::Halted &&
+                cpu.gpr[1] == 1 && cpu.gpr[6] == 0x10c0 + 2 * width &&
+                cpu.gpr[7] == 0x10d0 + 2 * width &&
+                (cpu.rflags & (1ULL << 6)) == 0,
+                "REPE CMPS must stop at the first mismatch"))
+        return 1;
+
+    memory.fill(0);
+    writePattern(0xc0, width, 0x11);
+    writePattern(0xc0 + width, width, 0x22);
+    writePattern(0xd0, width, 0x23);
+    writePattern(0xd0 + width, width, 0x22);
+    result = executeString(cmpsOpcode, width, 0xf2, 3, 0);
+    if (!expect(result.reason == rottr::X64StopReason::Halted &&
+                cpu.gpr[1] == 1 && cpu.gpr[6] == 0x10c0 + 2 * width &&
+                cpu.gpr[7] == 0x10d0 + 2 * width &&
+                (cpu.rflags & (1ULL << 6)) != 0,
+                "REPNE CMPS must stop at the first match"))
+        return 1;
+
+    memory.fill(0);
+    writePattern(0xd0, width, 0x11);
+    writePattern(0xd0 + width, width, 0x42);
+    result = executeString(scasOpcode, width, 0xf2, 3, 0x42);
+    if (!expect(result.reason == rottr::X64StopReason::Halted &&
+                cpu.gpr[1] == 1 && cpu.gpr[7] == 0x10d0 + 2 * width &&
+                (cpu.rflags & (1ULL << 6)) != 0,
+                "REPNE SCAS must stop when the accumulator matches"))
+        return 1;
+
+    memory.fill(0);
+    writePattern(0xd0, width, 0x11);
+    writePattern(0xd0 + width, width, 0x42);
+    result = executeString(scasOpcode, width, 0xf3, 3, 0x42);
+    if (!expect(result.reason == rottr::X64StopReason::Halted &&
+                cpu.gpr[1] == 2 && cpu.gpr[7] == 0x10d0 + width &&
+                (cpu.rflags & (1ULL << 6)) == 0,
+                "REPE SCAS must stop at the first mismatch"))
+        return 1;
+
+    memory.fill(0);
+    writePattern(0xc0, width, 0x11);
+    writePattern(0xc0 + width, width, 0x22);
+    result = executeString(lodsOpcode, width, 0xf3, 2, 0);
+    if (!expect(result.reason == rottr::X64StopReason::Halted &&
+                cpu.gpr[0] == 0x22 && cpu.gpr[1] == 0 &&
+                cpu.gpr[6] == 0x10c0 + 2 * width,
+                "REP LODS must load the final element at each supported width"))
+        return 1;
+
+    memory.fill(0);
+    result = executeString(stosOpcode, width, 0xf3, 2, 0x42);
+    if (!expect(result.reason == rottr::X64StopReason::Halted &&
+                cpu.gpr[1] == 0 && cpu.gpr[7] == 0x10d0 + 2 * width,
+                "REP STOS must advance by each supported element width"))
+        return 1;
+    uint8_t expected[16] = {};
+    for (size_t i = 0; i < 2 * width; ++i)
+        expected[i] = static_cast<uint8_t>(
+                uint64_t{0x42} >> ((i % width) * 8U));
+    const bool storesCorrectBytes =
+            std::memcmp(memory.data() + 0xd0, expected, 2 * width) == 0;
+    if (!expect(storesCorrectBytes,
+                "REP STOS must write the accumulator at each supported width")) {
+        std::fprintf(stderr, "  width=%zu actual=", width);
+        for (size_t i = 0; i < 2 * width; ++i)
+            std::fprintf(stderr, "%02x", memory[0xd0 + i]);
+        std::fprintf(stderr, " expected=");
+        for (size_t i = 0; i < 2 * width; ++i)
+            std::fprintf(stderr, "%02x", expected[i]);
+        std::fprintf(stderr, "\n");
+        return 1;
+    }
     }
 
     std::puts("OK");
