@@ -66,7 +66,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 32. ✅ Implement handles. **Pass:** invalid and closed handles return correct errors (`tests/test_win32_handles`, host).
 33. ✅ Implement heaps. **Pass:** a million random allocate and free operations show no corruption (`tests/test_win32_heap`, host).
 34. ✅ Implement files and paths, mapping the game folder through Android storage. **Pass:** case-insensitive open, seek past 4 GB and directory listing work (`tests/test_win32_files`, host).
-35. Implement memory-mapped files. **Pass:** multiple views show correct data.
+35. ✅ Implement memory-mapped files. **Pass:** multiple views show correct data. `CreateFileMappingA`, `MapViewOfFile` and `UnmapViewOfFile` are implemented over `mmap`; `tests/test_win32_mmap` verifies two distinct views over one mapping show the file, writes through one view are visible through the other, and a page-offset view shows the right data. Phone run pending.
 36. ✅ Implement threads, thread IDs and per-thread TLS. **Pass:** 32 threads created via CreateThread, each increments a counter and records its index; WaitForSingleObject joins all threads cleanly (`tests/test_win32_threads`, host). GetCurrentProcessId returns real PID, GetCurrentThreadId returns pthread_self.
 37. ✅ Implement events, mutexes, semaphores, critical sections, SRW locks, condition variables and waits. **Pass:** stress test runs 8 threads × 50000 iterations with no deadlock and exact counter match (`tests/test_win32_sync`, host). Critical sections, events, mutexes and semaphores backed by pthreads/semaphores.
 38. Implement timers, clocks and sleep. **Pass:** time never goes backward.

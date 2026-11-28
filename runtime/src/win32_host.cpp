@@ -9,11 +9,13 @@
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
+#include <fcntl.h>
 #include <map>
 #include <mutex>
 #include <pthread.h>
 #include <semaphore.h>
 #include <string>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -31,6 +33,7 @@ struct HandleEntry {
     bool signaled = false;
     FILE* file = nullptr;     // for file handles
     uint64_t offset = 0;      // current file offset
+    std::string path;         // file path for handles backed by a file
 };
 
 std::map<uint64_t, HandleEntry> g_handles;
@@ -40,7 +43,9 @@ uint64_t g_nextHandle = 0x1000;
 uint64_t allocHandle(uint64_t type) {
     std::lock_guard<std::mutex> lock(g_handlesMutex);
     uint64_t h = g_nextHandle += 4;
-    g_handles.emplace(h, HandleEntry{type});
+    HandleEntry entry{};
+    entry.type = type;
+    g_handles.emplace(h, std::move(entry));
     return h;
 }
 
@@ -49,7 +54,11 @@ uint64_t allocFileHandle(const char* path, const char* mode) {
     uint64_t h = g_nextHandle += 4;
     FILE* f = std::fopen(path, mode);
     if (!f) return 0;
-    g_handles.emplace(h, HandleEntry{1, 1, false, f, 0});
+    HandleEntry entry{};
+    entry.type = 1;
+    entry.file = f;
+    entry.path = path;
+    g_handles.emplace(h, std::move(entry));
     return h;
 }
 
@@ -356,9 +365,52 @@ extern "C" uint64_t host_WriteFile(uint64_t handle, uint64_t buffer,
     return static_cast<uint64_t>(wrote > 0 ? 1 : 0); // TRUE/FALSE
 }
 
+// ---- Memory-mapped file bookkeeping (declared early: CloseHandle uses it) ----
+struct MappingEntry {
+    int fd = -1;
+    size_t size = 0;
+    bool writable = false;
+    bool anonymous = false;
+};
+
+std::map<uint64_t, MappingEntry> g_mappings;
+std::mutex g_mappingsMutex;
+uint64_t g_nextMapping = 0x2000000;
+
+struct ViewEntry {
+    void* address = nullptr;
+    size_t size = 0;
+    uint64_t mapping = 0;
+};
+
+std::map<void*, ViewEntry> g_views;
+std::mutex g_viewsMutex;
+
 extern "C" uint64_t host_CloseHandle(uint64_t handle, uint64_t, uint64_t,
                                      uint64_t, uint64_t, uint64_t,
                                      uint64_t, uint64_t) {
+    // File mappings live in their own table: unmap their views, close the fd.
+    {
+        std::lock_guard<std::mutex> lock(g_mappingsMutex);
+        auto mit = g_mappings.find(handle);
+        if (mit != g_mappings.end()) {
+            {
+                std::lock_guard<std::mutex> vlock(g_viewsMutex);
+                for (auto vit = g_views.begin(); vit != g_views.end();) {
+                    if (vit->second.mapping == handle) {
+                        munmap(vit->second.address, vit->second.size);
+                        vit = g_views.erase(vit);
+                    } else {
+                        ++vit;
+                    }
+                }
+            }
+            if (mit->second.fd >= 0) close(mit->second.fd);
+            g_mappings.erase(mit);
+            return 1;
+        }
+    }
+
     std::lock_guard<std::mutex> lock(g_handlesMutex);
     auto it = g_handles.find(handle);
     if (it == g_handles.end()) return 0; // FALSE: invalid handle
@@ -498,6 +550,92 @@ extern "C" uint64_t host_FindClose(uint64_t handle, uint64_t, uint64_t,
     if (it == g_findHandles.end()) return 0;
     if (it->second.dir) closedir(it->second.dir);
     g_findHandles.erase(it);
+    return 1;
+}
+
+// ---- Memory-mapped files (CreateFileMappingA / MapViewOfFile) ----
+extern "C" uint64_t host_CreateFileMappingA(uint64_t file, uint64_t, uint64_t protect,
+                                            uint64_t maxHigh, uint64_t maxLow,
+                                            uint64_t, uint64_t, uint64_t) {
+    // PAGE_READWRITE=0x04, PAGE_WRITECOPY=0x08, PAGE_EXECUTE_READWRITE=0x40
+    const bool writable = (protect & 0x04U) || (protect & 0x08U) || (protect & 0x40U);
+    const uint64_t requested = (maxHigh << 32) | (maxLow & 0xffffffffULL);
+    const bool anonymous = (file == 0 || file == static_cast<uint64_t>(-1));
+
+    std::string path;
+    if (!anonymous) {
+        std::lock_guard<std::mutex> lock(g_handlesMutex);
+        auto it = g_handles.find(file);
+        if (it == g_handles.end() || it->second.path.empty()) return 0;
+        path = it->second.path;
+    }
+
+    int fd = -1;
+    size_t size = static_cast<size_t>(requested);
+    if (!anonymous) {
+        fd = open(path.c_str(), writable ? O_RDWR : O_RDONLY);
+        if (fd < 0) return 0;
+        struct stat st{};
+        if (fstat(fd, &st) != 0) { close(fd); return 0; }
+        if (size == 0) size = static_cast<size_t>(st.st_size);
+        if (writable && size > static_cast<size_t>(st.st_size)) {
+            if (ftruncate(fd, static_cast<off_t>(size)) != 0) { close(fd); return 0; }
+        }
+    }
+    if (size == 0) size = 4096;
+
+    std::lock_guard<std::mutex> lock(g_mappingsMutex);
+    uint64_t h = g_nextMapping += 4;
+    MappingEntry entry;
+    entry.fd = fd;
+    entry.size = size;
+    entry.writable = writable;
+    entry.anonymous = anonymous;
+    g_mappings.emplace(h, entry);
+    return h;
+}
+
+extern "C" uint64_t host_MapViewOfFile(uint64_t mapping, uint64_t,
+                                       uint64_t offsetHigh, uint64_t offsetLow,
+                                       uint64_t bytes, uint64_t, uint64_t,
+                                       uint64_t) {
+    MappingEntry entry;
+    {
+        std::lock_guard<std::mutex> lock(g_mappingsMutex);
+        auto it = g_mappings.find(mapping);
+        if (it == g_mappings.end()) return 0;
+        entry = it->second;
+    }
+    const uint64_t offset = (offsetHigh << 32) | (offsetLow & 0xffffffffULL);
+    long pageSize = sysconf(_SC_PAGESIZE);
+    if (pageSize <= 0) pageSize = 4096;
+    if (offset % static_cast<uint64_t>(pageSize) != 0) return 0;
+    if (offset >= entry.size) return 0;
+    const size_t length = bytes ? static_cast<size_t>(bytes)
+                                : entry.size - static_cast<size_t>(offset);
+    const int prot = PROT_READ | (entry.writable ? PROT_WRITE : 0);
+    void* addr = nullptr;
+    if (entry.anonymous) {
+        addr = mmap(nullptr, length, prot, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    } else {
+        addr = mmap(nullptr, length, prot, MAP_SHARED, entry.fd,
+                    static_cast<off_t>(offset));
+    }
+    if (addr == MAP_FAILED) return 0;
+    std::lock_guard<std::mutex> lock(g_viewsMutex);
+    g_views.emplace(addr, ViewEntry{addr, length, mapping});
+    return reinterpret_cast<uint64_t>(addr);
+}
+
+extern "C" uint64_t host_UnmapViewOfFile(uint64_t address, uint64_t, uint64_t,
+                                         uint64_t, uint64_t, uint64_t,
+                                         uint64_t, uint64_t) {
+    void* addr = reinterpret_cast<void*>(address);
+    std::lock_guard<std::mutex> lock(g_viewsMutex);
+    auto it = g_views.find(addr);
+    if (it == g_views.end()) return 0;
+    munmap(addr, it->second.size);
+    g_views.erase(it);
     return 1;
 }
 
@@ -809,6 +947,9 @@ void registerHostModules() {
         {"FindFirstFileA", reinterpret_cast<uint64_t>(&host_FindFirstFileA)},
         {"FindNextFileA", reinterpret_cast<uint64_t>(&host_FindNextFileA)},
         {"FindClose", reinterpret_cast<uint64_t>(&host_FindClose)},
+        {"CreateFileMappingA", reinterpret_cast<uint64_t>(&host_CreateFileMappingA)},
+        {"MapViewOfFile", reinterpret_cast<uint64_t>(&host_MapViewOfFile)},
+        {"UnmapViewOfFile", reinterpret_cast<uint64_t>(&host_UnmapViewOfFile)},
         {"HeapAlloc", reinterpret_cast<uint64_t>(&host_HeapAlloc)},
         {"HeapFree", reinterpret_cast<uint64_t>(&host_HeapFree)},
         {"HeapReAlloc", reinterpret_cast<uint64_t>(&host_HeapReAlloc)},
