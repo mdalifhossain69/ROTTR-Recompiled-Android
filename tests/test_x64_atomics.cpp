@@ -6,6 +6,7 @@
 //      observe both loads as zero.
 // The phone run is still required by the roadmap before the step is closed.
 #include "rottr/x64_runtime.h"
+#include "x64_test_runner.h"
 
 #include <atomic>
 #include <cstdint>
@@ -49,7 +50,7 @@ bool singleThreadSemantics() {
     rottr_cpu cpu{};
     rottr_cpu_reset(&cpu, kBase, kBase + 0x1000);
     const rottr::X64GuestMemory guest{kBase, memory.data(), memory.size(), true, true};
-    auto result = rottr::runX64Interpreter(cpu, guest, 64);
+    auto result = runX64ForTest(cpu, guest, 64);
 
     uint64_t memValue = 0;
     std::memcpy(&memValue, memory.data() + 0x10d0 - kBase, sizeof(memValue));
@@ -87,7 +88,7 @@ void* counterWorker(void* arg) {
     rottr_cpu_reset(&cpu, kBase, kBase + 0x1000);
     cpu.gpr[1] = job->iterations;  // rcx = loop counter
     // mov rbx,0x1100; loop: lock add qword [rbx],1; dec rcx; jnz loop; hlt
-    rottr::runX64Interpreter(cpu, job->guest, job->iterations * 3 + 16);
+    runX64ForTest(cpu, job->guest, job->iterations * 3 + 16);
     return nullptr;
 }
 
@@ -152,7 +153,7 @@ void* litmusWorker(void* arg) {
     cpu.gpr[8] = job->first;   // r8
     cpu.gpr[9] = job->second;  // r9
     pthread_barrier_wait(job->barrier);
-    rottr::runX64Interpreter(cpu, job->guest, 8);
+    runX64ForTest(cpu, job->guest, 8);
     job->observed = cpu.gpr[0];
     return nullptr;
 }

@@ -117,6 +117,16 @@ uint32_t subReg(uint32_t rd, uint32_t rn, uint32_t rm, Shift shift,
     return shifted(0xcb000000U, rd, rn, rm, shift, amount);
 }
 
+uint32_t subsReg(uint32_t rd, uint32_t rn, uint32_t rm, Shift shift,
+                 unsigned amount) {
+    return shifted(0xeb000000U, rd, rn, rm, shift, amount);
+}
+
+uint32_t addsReg(uint32_t rd, uint32_t rn, uint32_t rm, Shift shift,
+                 unsigned amount) {
+    return shifted(0xab000000U, rd, rn, rm, shift, amount);
+}
+
 uint32_t cmpReg(uint32_t rn, uint32_t rm, Shift shift, unsigned amount) {
     return shifted(0xeb000000U, kXzr, rn, rm, shift, amount);
 }
@@ -284,6 +294,15 @@ uint32_t adrp(uint32_t rd, int64_t byteOffset) {
     assert(pages >= -(1LL << 20) && pages < (1LL << 20));
     const uint32_t value = static_cast<uint32_t>(pages) & 0x1fffffU;
     return 0x90000000U | ((value & 3U) << 29) | ((value >> 2) << 5) | reg(rd);
+}
+
+uint32_t mrsNzcv(uint32_t rt) { return 0xd53b4200U | reg(rt); }
+
+uint32_t msrNzcv(uint32_t rt) { return 0xd51b4200U | reg(rt); }
+
+uint32_t cset(uint32_t rd, Condition condition) {
+    assert(static_cast<uint8_t>(condition) < 15);
+    return 0x9a9f07e0U | ((static_cast<uint32_t>(condition) ^ 1U) << 12) | reg(rd);
 }
 
 }  // namespace arm64

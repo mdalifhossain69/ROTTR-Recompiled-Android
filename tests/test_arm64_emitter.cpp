@@ -156,6 +156,14 @@ int main() {
     ok &= check("adrp x1, #4096", adrp(1, 4096));
     ok &= check("adrp x2, #-8192", adrp(2, -8192));
 
+    ok &= check("mrs x12, NZCV", mrsNzcv(12));
+    ok &= check("msr NZCV, x12", msrNzcv(12));
+    ok &= check("cset x10, eq", cset(10, Condition::Eq));
+    ok &= check("cset x10, ne", cset(10, Condition::Ne));
+    ok &= check("cset x10, cs", cset(10, Condition::Cs));
+    ok &= check("cset x10, cc", cset(10, Condition::Cc));
+    ok &= check("cset x10, lt", cset(10, Condition::Lt));
+
     std::remove(kTempFile.c_str());
     if (!ok) return 1;
     std::puts("OK (emitter matches llvm-mc for all covered instructions)");

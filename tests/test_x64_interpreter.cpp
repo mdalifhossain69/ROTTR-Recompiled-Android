@@ -1,4 +1,5 @@
 #include "rottr/x64_runtime.h"
+#include "x64_test_runner.h"
 
 #include <array>
 #include <cstdint>
@@ -30,7 +31,7 @@ int main() {
     rottr_cpu cpu{};
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
     const rottr::X64GuestMemory guest{0x1000, memory.data(), memory.size(), true, true};
-    auto result = rottr::runX64Interpreter(cpu, guest, 64);
+    auto result = runX64ForTest(cpu, guest, 64);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "sign-extended immediate CMP and conditional branch must execute") ||
         !expect(cpu.gpr[2] == 12, "PUSH/POP must preserve the computed value") ||
@@ -46,7 +47,7 @@ int main() {
     memory.fill(0);
     for (size_t i = 0; i < sizeof(simple); ++i) memory[i] = simple[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 8);
+    result = runX64ForTest(cpu, guest, 8);
     if (!expect(result.reason == rottr::X64StopReason::Halted, "HLT must stop cleanly") ||
         !expect(cpu.gpr[0] == 42, "MOV r64, imm64 must set RAX") ||
         !expect(result.instructionsExecuted == 2, "instruction count must be exact")) {
@@ -62,7 +63,7 @@ int main() {
     memory.fill(0);
     for (size_t i = 0; i < sizeof(callProgram); ++i) memory[i] = callProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 8);
+    result = runX64ForTest(cpu, guest, 8);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "nested RET must return to caller") ||
         !expect(cpu.gpr[0] == 42, "called guest function must execute") ||
@@ -85,7 +86,7 @@ int main() {
     memory.fill(0);
     for (size_t i = 0; i < sizeof(memoryProgram); ++i) memory[i] = memoryProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 32);
+    result = runX64ForTest(cpu, guest, 32);
     uint64_t plainMemory = 0;
     uint64_t indexedMemory = 0;
     std::memcpy(&plainMemory, memory.data() + 0xd0, sizeof(plainMemory));
@@ -109,7 +110,7 @@ int main() {
     memory.fill(0);
     for (size_t i = 0; i < sizeof(nearBranchProgram); ++i) memory[i] = nearBranchProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 32);
+    result = runX64ForTest(cpu, guest, 32);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "near conditional branch must reach HLT") ||
         !expect(cpu.rip == 0x101f, "near JZ must branch to the second HLT")) {
@@ -130,7 +131,7 @@ int main() {
     memory.fill(0);
     for (size_t i = 0; i < sizeof(logicalProgram); ++i) memory[i] = logicalProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 32);
+    result = runX64ForTest(cpu, guest, 32);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "logical instructions must reach HLT") ||
         !expect(cpu.gpr[0] == 0x0f, "OR and AND must produce the expected RAX") ||
@@ -153,7 +154,7 @@ int main() {
     for (size_t i = 0; i < sizeof(immediateMemoryProgram); ++i)
         memory[i] = immediateMemoryProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 32);
+    result = runX64ForTest(cpu, guest, 32);
     uint64_t immediateMemoryValue = 0;
     std::memcpy(&immediateMemoryValue, memory.data() + 0xd0,
                 sizeof(immediateMemoryValue));
@@ -178,7 +179,7 @@ int main() {
     for (size_t i = 0; i < sizeof(outOfBoundsImmediateProgram); ++i)
         memory[i] = outOfBoundsImmediateProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 16);
+    result = runX64ForTest(cpu, guest, 16);
     if (!expect(result.reason == rottr::X64StopReason::InvalidMemory,
                 "out-of-bounds immediate memory operand must fault")) {
         return 1;
@@ -198,7 +199,7 @@ int main() {
     memory.fill(0);
     for (size_t i = 0; i < sizeof(shiftProgram); ++i) memory[i] = shiftProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 32);
+    result = runX64ForTest(cpu, guest, 32);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "64-bit shift instructions must reach HLT") ||
         !expect(cpu.gpr[0] == 12, "SHL must shift the destination left") ||
@@ -219,7 +220,7 @@ int main() {
         memory[i] = zeroShiftProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
     cpu.rflags |= (1ULL << 0);
-    result = rottr::runX64Interpreter(cpu, guest, 8);
+    result = runX64ForTest(cpu, guest, 8);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "zero-count shift must reach HLT") ||
         !expect(cpu.gpr[0] == 0x1234, "zero-count shift must preserve its operand") ||
@@ -249,7 +250,7 @@ int main() {
     for (size_t i = 0; i < sizeof(extensionProgram); ++i)
         memory[i] = extensionProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 32);
+    result = runX64ForTest(cpu, guest, 32);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "MOVZX/MOVSX/MOVSXD must reach HLT") ||
         !expect(cpu.gpr[0] == 0x80, "MOVZX byte must zero extend") ||
@@ -271,7 +272,7 @@ int main() {
         memory[i] = zeroExtend32Program[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
     cpu.gpr[0] = 0xffffffffffffffffULL;
-    result = rottr::runX64Interpreter(cpu, guest, 8);
+    result = runX64ForTest(cpu, guest, 8);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "32-bit MOV must reach HLT") ||
         !expect(cpu.gpr[0] == 0x12345678,
@@ -292,7 +293,7 @@ int main() {
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
     cpu.gpr[0] = 0x1122334455660001ULL;
     cpu.gpr[1] = 2;
-    result = rottr::runX64Interpreter(cpu, guest, 8);
+    result = runX64ForTest(cpu, guest, 8);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "16-bit and 8-bit arithmetic must reach HLT") ||
         !expect(cpu.gpr[0] == 0x1122334455660005ULL,
@@ -310,7 +311,7 @@ int main() {
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
     cpu.gpr[0] = 0xffffffffffffffffULL;
     cpu.gpr[3] = 2;
-    result = rottr::runX64Interpreter(cpu, guest, 8);
+    result = runX64ForTest(cpu, guest, 8);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "32-bit arithmetic must reach HLT") ||
         !expect(cpu.gpr[0] == 1,
@@ -331,7 +332,7 @@ int main() {
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
     cpu.gpr[3] = 0x10d0;
     cpu.gpr[1] = 1;
-    result = rottr::runX64Interpreter(cpu, guest, 8);
+    result = runX64ForTest(cpu, guest, 8);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "byte memory arithmetic must reach HLT") ||
         !expect(memory[0xd0] == 0xff && memory[0xd1] == 0x7a,
@@ -351,7 +352,7 @@ int main() {
     for (size_t i = 0; i < sizeof(movsbProgram); ++i) memory[i] = movsbProgram[i];
     for (size_t i = 0; i < 8; ++i) memory[0x40 + i] = static_cast<uint8_t>(i + 1);
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 64);
+    result = runX64ForTest(cpu, guest, 64);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "rep movsb must reach HLT") ||
         !expect(cpu.gpr[6] == 0x1048, "rep movsb must advance RSI") ||
@@ -377,7 +378,7 @@ int main() {
     memory.fill(0);
     for (size_t i = 0; i < sizeof(stosbProgram); ++i) memory[i] = stosbProgram[i];
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 64);
+    result = runX64ForTest(cpu, guest, 64);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "rep stosb must reach HLT") ||
         !expect(cpu.gpr[7] == 0x1088, "rep stosb must advance RDI") ||
@@ -401,7 +402,7 @@ int main() {
     for (size_t i = 0; i < sizeof(lodsbProgram); ++i) memory[i] = lodsbProgram[i];
     memory[0x40] = 0xab;
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 8);
+    result = runX64ForTest(cpu, guest, 8);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "lodsb must reach HLT") ||
         !expect(cpu.gpr[0] == 0xab, "lodsb must load byte into AL") ||
@@ -424,7 +425,7 @@ int main() {
     memory[0x42] = 3;  // [0x1042] = 3 (target)
     memory[0x43] = 4;  // [0x1043] = 4
     rottr_cpu_reset(&cpu, 0x1000, 0x1080);
-    result = rottr::runX64Interpreter(cpu, guest, 16);
+    result = runX64ForTest(cpu, guest, 16);
     if (!expect(result.reason == rottr::X64StopReason::Halted,
                 "repne scasb must reach HLT") ||
         !expect(cpu.gpr[7] == 0x1043, "repne scasb must point RDI past found byte") ||

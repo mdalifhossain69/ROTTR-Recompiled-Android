@@ -1,5 +1,6 @@
 #include "rottr/x64_bridge.h"
 #include "rottr/x64_runtime.h"
+#include "x64_test_runner.h"
 #include "rottr/guest_mem.h"
 
 #include <cstdio>
@@ -111,7 +112,7 @@ int main() {
     rottr_guest_translate(mem, base, 4096, &r);
     guest.data = static_cast<uint8_t*>(r.host);
 
-    auto result = rottr::runX64Interpreter(cpu, guest, 64);
+    auto result = runX64ForTest(cpu, guest, 64);
     std::fprintf(stderr, "DEBUG: reason=%d rax=0x%llx rip=0x%llx executed=%llu\n",
             (int)result.reason,
             (unsigned long long)cpu.gpr[0],

@@ -44,6 +44,10 @@ uint32_t addReg(uint32_t rd, uint32_t rn, uint32_t rm, Shift shift = Shift::Lsl,
                 unsigned amount = 0);
 uint32_t subReg(uint32_t rd, uint32_t rn, uint32_t rm, Shift shift = Shift::Lsl,
                 unsigned amount = 0);
+uint32_t subsReg(uint32_t rd, uint32_t rn, uint32_t rm, Shift shift = Shift::Lsl,
+                 unsigned amount = 0);
+uint32_t addsReg(uint32_t rd, uint32_t rn, uint32_t rm, Shift shift = Shift::Lsl,
+                 unsigned amount = 0);
 uint32_t cmpReg(uint32_t rn, uint32_t rm, Shift shift = Shift::Lsl,
                 unsigned amount = 0);
 
@@ -86,6 +90,10 @@ uint32_t tbnz(uint32_t rt, unsigned bit, int64_t byteOffset);
 
 uint32_t adr(uint32_t rd, int64_t byteOffset);
 uint32_t adrp(uint32_t rd, int64_t byteOffset);
+
+uint32_t mrsNzcv(uint32_t rt);
+uint32_t msrNzcv(uint32_t rt);
+uint32_t cset(uint32_t rd, Condition condition);
 
 }  // namespace arm64
 }  // namespace rottr

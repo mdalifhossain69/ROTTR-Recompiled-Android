@@ -1,6 +1,7 @@
 // Roadmap step 27: Add CPUID, RDTSC, XGETBV.
 // Pass: only implemented features are advertised.
 #include "rottr/x64_runtime.h"
+#include "x64_test_runner.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -30,7 +31,7 @@ Run runWith(uint64_t eax, uint64_t ecx, const std::vector<uint8_t>& code) {
     cpu.gpr[0] = eax;  // rax
     cpu.gpr[1] = ecx;  // rcx
     const rottr::X64GuestMemory guest{kBase, memory.data(), memory.size(), true, true};
-    auto result = rottr::runX64Interpreter(cpu, guest, 16);
+    auto result = runX64ForTest(cpu, guest, 16);
     return Run{cpu, result};
 }
 
