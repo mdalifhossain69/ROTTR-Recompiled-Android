@@ -21,6 +21,8 @@
 #include <unistd.h>
 #include <vector>
 #include <atomic>
+#include <chrono>
+#include <ctime>
 
 namespace rottr {
 
@@ -136,37 +138,50 @@ extern "C" uint64_t host_SetLastError(uint64_t code, uint64_t, uint64_t, uint64_
     return 0;
 }
 
+// ---- Monotonic clock helpers ----
+namespace {
+uint64_t steadyNanoseconds() {
+    return static_cast<uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+}
+}  // namespace
+
 extern "C" uint64_t host_GetTickCount(uint64_t, uint64_t, uint64_t, uint64_t,
                                       uint64_t, uint64_t, uint64_t, uint64_t) {
-    return 0;
+    return static_cast<uint32_t>(steadyNanoseconds() / 1000000ULL);
 }
 
 extern "C" uint64_t host_GetTickCount64(uint64_t, uint64_t, uint64_t, uint64_t,
                                         uint64_t, uint64_t, uint64_t, uint64_t) {
-    return 0;
+    return steadyNanoseconds() / 1000000ULL;
 }
 
 extern "C" uint64_t host_QueryPerformanceCounter(uint64_t lpCount, uint64_t, uint64_t,
                                                  uint64_t, uint64_t, uint64_t,
                                                  uint64_t, uint64_t) {
-    if (lpCount) {
-        (void)lpCount;
-    }
+    if (!lpCount) return 0;
+    uint64_t ticks = steadyNanoseconds();
+    std::memcpy(reinterpret_cast<void*>(lpCount), &ticks, sizeof(ticks));
     return 1;
 }
 
 extern "C" uint64_t host_QueryPerformanceFrequency(uint64_t lpFreq, uint64_t, uint64_t,
                                                    uint64_t, uint64_t, uint64_t,
                                                    uint64_t, uint64_t) {
-    if (lpFreq) {
-        (void)lpFreq;
-    }
+    if (!lpFreq) return 0;
+    const uint64_t frequency = 1000000000ULL;  // nanoseconds
+    std::memcpy(reinterpret_cast<void*>(lpFreq), &frequency, sizeof(frequency));
     return 1;
 }
 
 extern "C" uint64_t host_Sleep(uint64_t ms, uint64_t, uint64_t, uint64_t,
                                uint64_t, uint64_t, uint64_t, uint64_t) {
-    (void)ms;
+    struct timespec req;
+    req.tv_sec = static_cast<time_t>(ms / 1000ULL);
+    req.tv_nsec = static_cast<long>((ms % 1000ULL) * 1000000ULL);
+    while (nanosleep(&req, &req) != 0) {
+        // Resume after EINTR with the remaining time.
+    }
     return 0;
 }
 

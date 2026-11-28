@@ -137,6 +137,11 @@ target_link_libraries(test_win32_mmap PRIVATE rottr_core)
 target_compile_options(test_win32_mmap PRIVATE -Wall -Wextra -Werror)
 add_test(NAME win32_mmap COMMAND test_win32_mmap)
 
+add_executable(test_win32_time tests/test_win32_time.cpp)
+target_link_libraries(test_win32_time PRIVATE rottr_core)
+target_compile_options(test_win32_time PRIVATE -Wall -Wextra -Werror)
+add_test(NAME win32_time COMMAND test_win32_time)
+
 add_executable(test_win32_sync tests/test_win32_sync.cpp)
 target_link_libraries(test_win32_sync PRIVATE rottr_core)
 target_compile_options(test_win32_sync PRIVATE -Wall -Wextra -Werror -pthread)
