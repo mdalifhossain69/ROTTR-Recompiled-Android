@@ -19,6 +19,7 @@ add_library(rottr_core STATIC
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_host.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_registry.cpp
     ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_window.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime/src/win32_com.cpp
 )
 target_include_directories(rottr_core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/runtime/include)
 target_compile_options(rottr_core PRIVATE -Wall -Wextra -Werror)
@@ -160,6 +161,11 @@ add_executable(test_win32_window tests/test_win32_window.cpp)
 target_link_libraries(test_win32_window PRIVATE rottr_core)
 target_compile_options(test_win32_window PRIVATE -Wall -Wextra -Werror)
 add_test(NAME win32_window COMMAND test_win32_window)
+
+add_executable(test_win32_com tests/test_win32_com.cpp)
+target_link_libraries(test_win32_com PRIVATE rottr_core)
+target_compile_options(test_win32_com PRIVATE -Wall -Wextra -Werror)
+add_test(NAME win32_com COMMAND test_win32_com)
 
 add_executable(test_win32_sync tests/test_win32_sync.cpp)
 target_link_libraries(test_win32_sync PRIVATE rottr_core)

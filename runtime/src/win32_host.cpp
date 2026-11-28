@@ -930,6 +930,7 @@ uint32_t getExitCode() { return g_exitCode; }
 
 void registerRegistryHostModule();
 void registerWindowHostModule();
+void registerComHostModule();
 
 void registerHostModules() {
     HostModule k32;
@@ -990,6 +991,7 @@ void registerHostModules() {
     }
     registerRegistryHostModule();
     registerWindowHostModule();
+    registerComHostModule();
     // Allocate guest call addresses for each host export so the IAT can
     // point to them.
     for (HostModule& mod : hostModules()) {
