@@ -212,8 +212,8 @@ public:
     bool runTlsCallbacks(PeImage* image, rottr_cpu& cpu,
                          const X64GuestMemory& memory);
 
-    // Step 17: Call each module's entry point (DllMain for DLLs) in
-    // initialization order. Returns false if any entry point faults.
+    // Step 17: Call each loaded DLL's DllMain with DLL_PROCESS_ATTACH in
+    // dependency order. Returns false if an entry point faults or rejects load.
     bool callEntryPoints(rottr_cpu& cpu, const X64GuestMemory& memory);
     size_t moduleCount() const { return modules_.size(); }
     std::string describe() const;

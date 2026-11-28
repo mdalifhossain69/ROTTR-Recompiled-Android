@@ -795,6 +795,19 @@ std::vector<PeImage*> PeModuleRegistry::initializationOrder() const {
     return order;
 }
 
+bool PeModuleRegistry::callEntryPoints(rottr_cpu& cpu,
+                                      const X64GuestMemory& memory) {
+    constexpr uint32_t kDllProcessAttach = 1U;
+    for (PeImage* image : initializationOrder()) {
+        if (image == nullptr || !image->isDll()) continue;
+        uint64_t result = 0;
+        if (!image->callDllMain(cpu, memory, kDllProcessAttach, result) ||
+            result == 0)
+            return false;
+    }
+    return true;
+}
+
 std::vector<uint64_t> PeImage::tlsCallbackAddresses() const {
     std::vector<uint64_t> result;
     if (!hasTls() || tlsCallbacks_ == 0) return result;
