@@ -126,6 +126,13 @@ target_link_libraries(test_x64_cpuid PRIVATE rottr_core)
 target_compile_options(test_x64_cpuid PRIVATE -Wall -Wextra -Werror)
 add_test(NAME x64_cpuid COMMAND test_x64_cpuid)
 
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    add_executable(test_x64_differential tests/test_x64_differential.cpp)
+    target_link_libraries(test_x64_differential PRIVATE rottr_core)
+    target_compile_options(test_x64_differential PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME x64_differential COMMAND test_x64_differential)
+endif()
+
 add_test(NAME x64_interpreter_translated COMMAND test_x64_interpreter)
 set_tests_properties(x64_interpreter_translated PROPERTIES ENVIRONMENT "ROTTR_TRANSLATED_TESTS=1")
 add_test(NAME x64_bridge_translated COMMAND test_x64_bridge)
