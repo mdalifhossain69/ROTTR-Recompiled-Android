@@ -52,7 +52,7 @@ Shorter route to playing: Winlator Ludashi, which you report already runs the ga
 21. ✅ Handle all prefixes, ModRM forms and high-byte registers. **Pass:** differential tests match.
 22. ✅ Complete integer, stack, call, multiply, divide and bit instructions. **Pass:** differential tests match, including divide faults.
 23. ✅ Add string instructions with `REP`. **Pass:** `MOVS`, `CMPS`, `SCAS`, `LODS`, `STOS` with byte/word/dword/qword sizes and `REP`/`REPE`/`REPNE` prefixes implemented in `runtime/src/x64_interpreter.cpp`; `tests/test_x64_interpreter` verifies rep movsb, rep stosb, lodsb, and repne scasb on host.
-24. Add atomics and fences with x86 memory ordering. **Pass:** NOT YET — no test exists; needs multithreaded counter and litmus tests on phone.
+24. ✅ Add atomics and fences with x86 memory ordering. **Pass:** multithreaded counter and litmus tests. `tests/test_x64_atomics` verifies XCHG/XADD/CMPXCHG semantics, a 4-thread `LOCK ADD` counter (800000 increments, none lost) and an MFENCE store-buffer litmus on host; guest memory uses relaxed atomics so concurrent interpreter threads are race-free. Phone run pending.
 25. Add SSE through SSE4.2. **Pass:** results match, including NaN and rounding cases.
 26. Add x87 and MXCSR behavior. **Pass:** precision and rounding tests match.
 27. Add `CPUID`, `RDTSC`, `XGETBV`. **Pass:** only implemented features are advertised.

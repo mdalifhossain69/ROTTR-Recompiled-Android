@@ -3,6 +3,7 @@
 #include "rottr/x64_bridge.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -59,16 +60,114 @@ bool contains(const X64GuestMemory& memory, uint64_t address, size_t length) {
     return true;
 }
 
+bool isAtomicSize(size_t size) {
+    return size == 1 || size == 2 || size == 4 || size == 8;
+}
+
+// Guest memory is shared by every host thread running the interpreter, so all
+// naturally aligned accesses go through relaxed atomics to keep the program
+// free of data races. Unaligned accesses fall back to memcpy (x86 permits them
+// but they cannot participate in guest atomic operations).
 [[maybe_unused]] bool readGuest(const X64GuestMemory& memory, uint64_t address, void* out, size_t size) {
     if (!contains(memory, address, size)) return false;
-    std::memcpy(out, memory.data + static_cast<size_t>(address - memory.base), size);
+    uint8_t* p = memory.data + static_cast<size_t>(address - memory.base);
+    if (isAtomicSize(size) && (address % size) == 0) {
+        switch (size) {
+            case 1: *static_cast<uint8_t*>(out) =
+                        __atomic_load_n(reinterpret_cast<uint8_t*>(p), __ATOMIC_RELAXED); break;
+            case 2: *static_cast<uint16_t*>(out) =
+                        __atomic_load_n(reinterpret_cast<uint16_t*>(p), __ATOMIC_RELAXED); break;
+            case 4: *static_cast<uint32_t*>(out) =
+                        __atomic_load_n(reinterpret_cast<uint32_t*>(p), __ATOMIC_RELAXED); break;
+            default: *static_cast<uint64_t*>(out) =
+                        __atomic_load_n(reinterpret_cast<uint64_t*>(p), __ATOMIC_RELAXED); break;
+        }
+    } else {
+        std::memcpy(out, p, size);
+    }
     return true;
 }
 
 [[maybe_unused]] bool writeGuest(const X64GuestMemory& memory, uint64_t address,
                 const void* value, size_t size) {
     if (!memory.writable || !contains(memory, address, size)) return false;
-    std::memcpy(memory.data + static_cast<size_t>(address - memory.base), value, size);
+    uint8_t* p = memory.data + static_cast<size_t>(address - memory.base);
+    if (isAtomicSize(size) && (address % size) == 0) {
+        switch (size) {
+            case 1: __atomic_store_n(reinterpret_cast<uint8_t*>(p),
+                        *static_cast<const uint8_t*>(value), __ATOMIC_RELAXED); break;
+            case 2: __atomic_store_n(reinterpret_cast<uint16_t*>(p),
+                        *static_cast<const uint16_t*>(value), __ATOMIC_RELAXED); break;
+            case 4: __atomic_store_n(reinterpret_cast<uint32_t*>(p),
+                        *static_cast<const uint32_t*>(value), __ATOMIC_RELAXED); break;
+            default: __atomic_store_n(reinterpret_cast<uint64_t*>(p),
+                        *static_cast<const uint64_t*>(value), __ATOMIC_RELAXED); break;
+        }
+    } else {
+        std::memcpy(p, value, size);
+    }
+    return true;
+}
+
+// ---- Atomic read-modify-write helpers (LOCK prefix / XCHG) ----
+enum class AtomicOp { Add, Sub, Or, And, Xor, Exchange };
+
+template <typename T>
+bool atomicRmwT(AtomicOp op, void* p, uint64_t value, uint64_t& old) {
+    T v = static_cast<T>(value);
+    T* typed = static_cast<T*>(p);
+    switch (op) {
+        case AtomicOp::Add: old = __atomic_fetch_add(typed, v, __ATOMIC_SEQ_CST); break;
+        case AtomicOp::Sub: old = __atomic_fetch_sub(typed, v, __ATOMIC_SEQ_CST); break;
+        case AtomicOp::Or:  old = __atomic_fetch_or(typed, v, __ATOMIC_SEQ_CST); break;
+        case AtomicOp::And: old = __atomic_fetch_and(typed, v, __ATOMIC_SEQ_CST); break;
+        case AtomicOp::Xor: old = __atomic_fetch_xor(typed, v, __ATOMIC_SEQ_CST); break;
+        case AtomicOp::Exchange:
+            old = __atomic_exchange_n(typed, v, __ATOMIC_SEQ_CST);
+            break;
+    }
+    return true;
+}
+
+bool guestAtomicRmw(const X64GuestMemory& memory, uint64_t address,
+                    AtomicOp op, uint64_t value, size_t size, uint64_t& old) {
+    if (!memory.writable || !contains(memory, address, size) || !isAtomicSize(size))
+        return false;
+    if ((address % size) != 0) return false;  // C++ atomics require alignment
+    void* p = memory.data + static_cast<size_t>(address - memory.base);
+    switch (size) {
+        case 1: return atomicRmwT<uint8_t>(op, p, value, old);
+        case 2: return atomicRmwT<uint16_t>(op, p, value, old);
+        case 4: return atomicRmwT<uint32_t>(op, p, value, old);
+        case 8: return atomicRmwT<uint64_t>(op, p, value, old);
+        default: return false;
+    }
+}
+
+// Returns the previous memory value; `ok` reports whether it matched `expected`.
+bool guestAtomicCmpxchg(const X64GuestMemory& memory, uint64_t address,
+                        uint64_t expected, uint64_t desired, size_t size,
+                        uint64_t& old, bool& matched) {
+    if (!memory.writable || !contains(memory, address, size) || !isAtomicSize(size))
+        return false;
+    if ((address % size) != 0) return false;
+    void* p = memory.data + static_cast<size_t>(address - memory.base);
+    auto run = [&](auto tag) {
+        using T = decltype(tag);
+        T exp = static_cast<T>(expected);
+        bool ok = __atomic_compare_exchange_n(static_cast<T*>(p), &exp,
+                                              static_cast<T>(desired), false,
+                                              __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+        matched = ok;
+        old = static_cast<uint64_t>(exp);
+    };
+    switch (size) {
+        case 1: run(uint8_t{}); break;
+        case 2: run(uint16_t{}); break;
+        case 4: run(uint32_t{}); break;
+        case 8: run(uint64_t{}); break;
+        default: return false;
+    }
     return true;
 }
 
@@ -238,7 +337,7 @@ struct RexPrefix {
 bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
                         Decoder& decoder, const RexPrefix& rex,
                         uint8_t opcode, size_t opSizeOverride,
-                        unsigned repPrefix, uint64_t segBase,
+                        unsigned repPrefix, uint64_t segBase, bool lockPrefix,
                         bool& ripUpdated, X64StopReason& stopReason) {
     ripUpdated = false;
     stopReason = X64StopReason::InvalidMemory;
@@ -292,6 +391,29 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         return true;
     }
 
+    // ---- XCHG: 86 /r (xchg r/m8, r8), 87 /r (xchg r/m, r) ----
+    // XCHG is implicitly locked, so a memory form always uses the atomic path.
+    if (opcode == 0x86 || opcode == 0x87) {
+        const size_t size = (opcode == 0x86) ? 1 : opSize;
+        uint8_t modrm = 0;
+        if (!decoder.byte(modrm)) return false;
+        RmOperand rm;
+        if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
+        unsigned regIndex = ((modrm >> 3) & 7) | (rex.r << 3);
+        uint64_t regValue = reg(cpu, regIndex);
+        if (rm.isRegister) {
+            uint64_t other = reg(cpu, rm.registerIndex);
+            writeOperandSized(memory, cpu, rm, size, regValue);
+            writeOperandSized(memory, cpu, RmOperand{true, regIndex, 0}, size, other);
+            return true;
+        }
+        uint64_t old = 0;
+        if (!guestAtomicRmw(memory, rm.address, AtomicOp::Exchange, regValue, size, old))
+            return false;
+        writeOperandSized(memory, cpu, RmOperand{true, regIndex, 0}, size, old);
+        return true;
+    }
+
     // ---- MOV: C6 /0 (mov r/m8, imm8) ----
     if (opcode == 0xc6) {
         uint8_t modrm = 0;
@@ -318,12 +440,22 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
             uint64_t addr = decoder.next() + static_cast<uint64_t>(disp32) + 4U;
             uint32_t imm = 0;
             if (!decoder.immediate(imm)) return false;
+            if (rexW) {
+                uint64_t value = static_cast<uint64_t>(static_cast<int64_t>(
+                    static_cast<int32_t>(imm)));
+                return writeGuest(memory, addr, &value, 8);
+            }
             return writeGuest(memory, addr, &imm, 4);
         }
         RmOperand rmOp;
         if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rmOp, segBase)) return false;
         uint32_t imm = 0;
         if (!decoder.immediate(imm)) return false;
+        if (rexW) {
+            uint64_t value = static_cast<uint64_t>(static_cast<int64_t>(
+                static_cast<int32_t>(imm)));
+            return writeOperandSized(memory, cpu, rmOp, 8, value);
+        }
         return writeOperandSized(memory, cpu, rmOp, 4, static_cast<uint64_t>(imm));
     }
 
@@ -336,11 +468,32 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         return true;
     }
 
-    // ---- FF /2 (call r/m64) and FF /6 (push r/m64) ----
+    // ---- FF /0 (inc r/m), FF /1 (dec r/m), FF /2 (call r/m64), FF /6 (push r/m64) ----
     if (opcode == 0xff) {
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         const unsigned regField = (modrm >> 3) & 7;
+        if (regField == 0 || regField == 1) { // inc / dec
+            RmOperand rm;
+            if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
+            const bool inc = (regField == 0);
+            const uint64_t savedCarry = cpu.rflags & kFlagCarry;
+            uint64_t old = 0;
+            if (lockPrefix && !rm.isRegister) {
+                if (!guestAtomicRmw(memory, rm.address,
+                                    inc ? AtomicOp::Add : AtomicOp::Sub, 1, opSize, old))
+                    return false;
+            } else {
+                if (!readOperandSized(memory, cpu, rm, opSize, old)) return false;
+            }
+            uint64_t result = inc ? old + 1 : old - 1;
+            if (!(lockPrefix && !rm.isRegister)) {
+                if (!writeOperandSized(memory, cpu, rm, opSize, result)) return false;
+            }
+            updateArithmeticFlags(cpu, result, old, 1, !inc, opSize);
+            cpu.rflags = (cpu.rflags & ~kFlagCarry) | savedCarry; // INC/DEC keep CF
+            return true;
+        }
         if (regField == 2) { // call r/m64
             RmOperand rm;
             if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
@@ -391,6 +544,13 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         RmOperand rm;
         if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
+        if (lockPrefix && !rm.isRegister) {
+            uint64_t old = 0;
+            if (!guestAtomicRmw(memory, rm.address, AtomicOp::Xor, src, opSize, old)) return false;
+            uint64_t result = old ^ src;
+            updateLogicalFlags(cpu, result, opSize);
+            return true;
+        }
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
         uint64_t result = dst ^ src;
@@ -453,6 +613,13 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         RmOperand rm;
         if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
+        if (lockPrefix && !rm.isRegister) {
+            uint64_t old = 0;
+            if (!guestAtomicRmw(memory, rm.address, AtomicOp::Add, src, opSize, old)) return false;
+            uint64_t result = old + src;
+            updateArithmeticFlags(cpu, result, old, src, false, opSize);
+            return true;
+        }
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
         uint64_t result = dst + src;
@@ -489,11 +656,39 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         if (!decoder.immediate(imm8)) return false;
         int64_t imm = imm8;
     if (regField == 0) {
+        if (lockPrefix && !rm.isRegister) {
+            uint64_t old = 0;
+            if (!guestAtomicRmw(memory, rm.address, AtomicOp::Add,
+                                static_cast<uint64_t>(imm), opSize, old))
+                return false;
+            uint64_t result = old + static_cast<uint64_t>(imm);
+            updateArithmeticFlags(cpu, result, old, static_cast<uint64_t>(imm),
+                                  false, opSize);
+            return true;
+        }
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
         uint64_t result = dst + static_cast<uint64_t>(imm);
         if (!writeOperandSized(memory, cpu, rm, opSize, result)) return false;
         updateArithmeticFlags(cpu, result, dst, static_cast<uint64_t>(imm), false, opSize);
+        return true;
+    }
+    if (regField == 5) { // sub r/m, imm8
+        if (lockPrefix && !rm.isRegister) {
+            uint64_t old = 0;
+            if (!guestAtomicRmw(memory, rm.address, AtomicOp::Sub,
+                                static_cast<uint64_t>(imm), opSize, old))
+                return false;
+            uint64_t result = old - static_cast<uint64_t>(imm);
+            updateArithmeticFlags(cpu, result, old, static_cast<uint64_t>(imm),
+                                  true, opSize);
+            return true;
+        }
+        uint64_t dst = 0;
+        if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
+        uint64_t result = dst - static_cast<uint64_t>(imm);
+        if (!writeOperandSized(memory, cpu, rm, opSize, result)) return false;
+        updateArithmeticFlags(cpu, result, dst, static_cast<uint64_t>(imm), true, opSize);
         return true;
     }
     if (regField == 7) {
@@ -541,6 +736,13 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         RmOperand rm;
         if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
+        if (lockPrefix && !rm.isRegister) {
+            uint64_t old = 0;
+            if (!guestAtomicRmw(memory, rm.address, AtomicOp::Or, src, opSize, old)) return false;
+            uint64_t result = old | src;
+            updateLogicalFlags(cpu, result, opSize);
+            return true;
+        }
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
         uint64_t result = dst | src;
@@ -572,6 +774,13 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
         RmOperand rm;
         if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         uint64_t src = reg(cpu, ((modrm >> 3) & 7) | (rex.r << 3));
+        if (lockPrefix && !rm.isRegister) {
+            uint64_t old = 0;
+            if (!guestAtomicRmw(memory, rm.address, AtomicOp::And, src, opSize, old)) return false;
+            uint64_t result = old & src;
+            updateLogicalFlags(cpu, result, opSize);
+            return true;
+        }
         uint64_t dst = 0;
         if (!readOperandSized(memory, cpu, rm, opSize, dst)) return false;
         uint64_t result = dst & src;
@@ -745,12 +954,77 @@ bool executeInstruction(rottr_cpu& cpu, const X64GuestMemory& memory,
             ripUpdated = true;
             return true;
         }
+        // ---- Fences: 0F AE F0 (MFENCE), 0F AE E8 (LFENCE), 0F AE F8 (SFENCE) ----
+        if (opcode2 == 0xae) {
+            uint8_t modrm = 0;
+            if (!decoder.byte(modrm)) return false;
+            if (modrm == 0xf0) { // MFENCE
+                std::atomic_thread_fence(std::memory_order_seq_cst);
+                return true;
+            }
+            if (modrm == 0xe8) { // LFENCE
+                std::atomic_thread_fence(std::memory_order_acquire);
+                return true;
+            }
+            if (modrm == 0xf8) { // SFENCE
+                std::atomic_thread_fence(std::memory_order_release);
+                return true;
+            }
+            return false;
+        }
         // ---- MOVZX/MOVSX: 0F B6/B7/BE/BF ----
         uint8_t modrm = 0;
         if (!decoder.byte(modrm)) return false;
         RmOperand rm;
         if (!decodeRmOperand(decoder, cpu, modrm, rex.b, rex.x, rm, segBase)) return false;
         unsigned dstReg = ((modrm >> 3) & 7) | (rex.r << 3);
+        // ---- XADD: 0F C0/C1 (xadd r/m, r) ----
+        if (opcode2 == 0xc0 || opcode2 == 0xc1) {
+            const size_t size = (opcode2 == 0xc0) ? 1 : opSize;
+            uint64_t src = 0;
+            if (!readOperandSized(memory, cpu, RmOperand{true, dstReg, 0}, size, src))
+                return false;
+            uint64_t old = 0;
+            if (!rm.isRegister) {
+                if (!guestAtomicRmw(memory, rm.address, AtomicOp::Add, src, size, old))
+                    return false;
+            } else {
+                if (!readOperandSized(memory, cpu, rm, size, old)) return false;
+                if (!writeOperandSized(memory, cpu, rm, size, old + src)) return false;
+            }
+            if (!writeOperandSized(memory, cpu, RmOperand{true, dstReg, 0}, size, old))
+                return false;
+            updateArithmeticFlags(cpu, old + src, old, src, false, size);
+            return true;
+        }
+        // ---- CMPXCHG: 0F B0/B1 (cmpxchg r/m, r) ----
+        if (opcode2 == 0xb0 || opcode2 == 0xb1) {
+            const size_t size = (opcode2 == 0xb0) ? 1 : opSize;
+            uint64_t src = 0;
+            if (!readOperandSized(memory, cpu, RmOperand{true, dstReg, 0}, size, src))
+                return false;
+            uint64_t acc = 0;
+            if (!readOperandSized(memory, cpu, RmOperand{true, 0, 0}, size, acc))
+                return false;
+            uint64_t old = 0;
+            bool matched = false;
+            if (!rm.isRegister) {
+                if (!guestAtomicCmpxchg(memory, rm.address, acc, src, size, old, matched))
+                    return false;
+            } else {
+                if (!readOperandSized(memory, cpu, rm, size, old)) return false;
+                matched = (old == acc);
+                if (matched && !writeOperandSized(memory, cpu, rm, size, src)) return false;
+            }
+            if (matched) {
+                cpu.rflags |= kFlagZero;
+            } else {
+                cpu.rflags &= ~kFlagZero;
+                if (!writeOperandSized(memory, cpu, RmOperand{true, 0, 0}, size, old))
+                    return false;
+            }
+            return true;
+        }
         if (opcode2 == 0xb6) {
             uint64_t v = 0;
             readOperandSized(memory, cpu, rm, 1, v);
@@ -882,11 +1156,14 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         size_t opSizeOverride = 8; // default 64-bit
         unsigned repPrefix = 0; // 0 = none, 1 = F3 (REP/REPE/REPZ), 2 = F2 (REPNE/REPNZ)
         unsigned gsOverride = 0; // 0 = none, 1 = GS (0x65)
-        // Legacy prefixes: 0x64 = FS, 0x65 = GS, 0x66 = operand-size override
+        bool lockPrefix = false;
+        // Legacy prefixes: 0x64 = FS, 0x65 = GS, 0x66 = operand-size override,
+        // 0xf0 = LOCK, 0xf2/0xf3 = REP.
         while (first == 0x64 || first == 0x65 || first == 0x66 ||
-               first == 0xf2 || first == 0xf3) {
+               first == 0xf0 || first == 0xf2 || first == 0xf3) {
             if (first == 0x64 || first == 0x65) gsOverride = 1;
             else if (first == 0x66) opSizeOverride = 2;
+            else if (first == 0xf0) lockPrefix = true;
             else if (first == 0xf2) repPrefix = 2;
             else if (first == 0xf3) repPrefix = 1;
             if (!decoder.byte(first)) {
@@ -915,7 +1192,7 @@ X64RunResult runX64Interpreter(rottr_cpu& cpu, const X64GuestMemory& memory,
         X64StopReason stopReason = X64StopReason::UnsupportedInstruction;
         uint64_t segBase = gsOverride ? cpu.gsBase : 0;
         bool ok = executeInstruction(cpu, memory, decoder, rex, first, opSizeOverride,
-                                     repPrefix, segBase, ripUpdated, stopReason);
+                                     repPrefix, segBase, lockPrefix, ripUpdated, stopReason);
         if (!ok) {
             result.reason = stopReason;
             result.faultAddress = instStart;
